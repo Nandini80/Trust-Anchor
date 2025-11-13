@@ -25,20 +25,23 @@ const ClientData = ({ userData }) => {
     if(userData){
     let da = []
     setkysStat(findStatus(userData.kycStatus))
-    userData.kycHistory.forEach(item => {
-      var d = new Date(parseInt(item[3])); 
-      const Titem = {
-        name: item[0],
-        remarks: item[1],
-        status: findStatus(item[2]),
-        time: d.toDateString()
-      }
-      da.push(Titem)
-    });
+    // Handle kycHistory - it might be empty or undefined
+    if (userData.kycHistory && Array.isArray(userData.kycHistory) && userData.kycHistory.length > 0) {
+      userData.kycHistory.forEach(item => {
+        var d = new Date(parseInt(item[3])); 
+        const Titem = {
+          name: item[0],
+          remarks: item[1],
+          status: findStatus(item[2]),
+          time: d.toDateString()
+        }
+        da.push(Titem)
+      });
+    }
     settableData(da)
     }
      // eslint-disable-next-line 
-  }, []);
+  }, [userData]);
   
 
   const copyKycId = (id)=>{

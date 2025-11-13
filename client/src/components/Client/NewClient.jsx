@@ -108,6 +108,14 @@ const NewClient = () => {
       
       if (result.success) {
         message.success("Registered Successfully!");
+        // Save token to localStorage
+        if (result.data && result.data.token) {
+          localStorage.setItem("clientToken", result.data.token);
+        }
+        // Redirect to client panel after a short delay
+        setTimeout(() => {
+          history.push("/client");
+        }, 1000);
       } else {
         message.error(result.message || result.error?.message || "Something went wrong");
         console.error("Registration error:", result);

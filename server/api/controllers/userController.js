@@ -5,6 +5,7 @@ const { gmail } = require("googleapis/build/src/apis/gmail");
 const transporter = require("../../config/nodemailer");
 const generateRandomString = require("../../utils/random");
 const Bank = require("../../models/Bank");
+const BankRequest = require("../../models/BankRequest");
 const { getDetails, getReqList, handelRequest, registerCustomer, updateRecordBC} = require("./blockchain");
 
 module.exports.register = async (req, res) => {
@@ -80,13 +81,66 @@ module.exports.register = async (req, res) => {
         // This allows the system to work even if blockchain is not set up
         receipt = null; // Explicitly set to null to indicate failure
       }
+      // Save all user data and document paths to database
+      // Note: socket field is not set - it will be undefined, which is fine with sparse index
       user = User({
         email: formData.email,
         kycId: kycId,
         password: hash,
+        name: formData.name,
+        phone: formData.phone,
+        address: formData.address,
+        gender: formData.gender,
+        dob: formData.dob,
+        PANno: formData.PANno,
+        panFile: panPath,
+        aadharFile: aadharPath,
+        selfieFile: selfiePath,
+        geo: formData.geo,
+        // socket is intentionally not set - will be undefined
       });
-      const token = jwt.sign({ email: user.email }, process.env.JWT_SECRET);
-      await user.save();
+      const token = jwt.sign({ email: user.email }, process.env.JWT_SECRET || 'dev_jwt_secret');
+      
+      try {
+        await user.save();
+        console.log("User saved successfully with data:", {
+          email: user.email,
+          kycId: user.kycId,
+          name: user.name,
+          phone: user.phone,
+          address: user.address,
+          panFile: user.panFile,
+          aadharFile: user.aadharFile,
+          selfieFile: user.selfieFile,
+        });
+      } catch (saveError) {
+        // Handle duplicate key error for socket field
+        if (saveError.code === 11000 && saveError.keyPattern && saveError.keyPattern.socket) {
+          console.error("Socket index error detected. Please run: node server/scripts/fixSocketIndex.js");
+          // Try to save again without socket field explicitly
+          user = User({
+            email: formData.email,
+            kycId: kycId,
+            password: hash,
+            name: formData.name,
+            phone: formData.phone,
+            address: formData.address,
+            gender: formData.gender,
+            dob: formData.dob,
+            PANno: formData.PANno,
+            panFile: panPath,
+            aadharFile: aadharPath,
+            selfieFile: selfiePath,
+            geo: formData.geo,
+          });
+          // Remove socket from the document if it exists
+          user.socket = undefined;
+          await user.save();
+          console.log("User saved successfully after socket fix");
+        } else {
+          throw saveError;
+        }
+      }
       
       // Try to send email, but don't fail registration if email fails
       try {
@@ -128,21 +182,46 @@ module.exports.register = async (req, res) => {
       }
       let pass = generateRandomString(8);
       let hash = await bcrypt.hash(pass, 10);
+      
+      // Save all bank data to database
       bank = Bank({
         email: req.body.email,
         ethAddress: req.body.ethAddress,
         password: hash,
+        bankName: req.body.bankName || "",
+        bankAddress: req.body.bankAddress || "",
+        contactNumber: req.body.contactNumber || "",
       });
-      const token = jwt.sign({ email: bank.email }, process.env.JWT_SECRET);
+      const token = jwt.sign({ email: bank.email }, process.env.JWT_SECRET || 'dev_jwt_secret');
       await bank.save();
-      const result = await transporter.sendMail({
-        from: "eKYC Portal <ayushtest935@gmail.com>",
-        to: bank.email,
-        replyTo: "ayushtest935@gmail.com",
-        subject: "Bank credentials",
-        html: `<p><span style="font-size:16px">Email</span>:&nbsp; ${bank.email}</p>
-                        <p><span style="font-size:16px">Password</span>:&nbsp; ${pass}</p>`,
+      console.log("Bank saved successfully with data:", {
+        email: bank.email,
+        ethAddress: bank.ethAddress,
+        bankName: bank.bankName,
+        bankAddress: bank.bankAddress,
+        contactNumber: bank.contactNumber,
       });
+      
+      // Try to send email, but don't fail registration if email fails
+      try {
+        await transporter.sendMail({
+          from: "eKYC Portal <ayushtest935@gmail.com>",
+          to: bank.email,
+          replyTo: "ayushtest935@gmail.com",
+          subject: "Bank credentials",
+          html: `<p><span style="font-size:16px">Email</span>:&nbsp; ${bank.email}</p>
+                          <p><span style="font-size:16px">Password</span>:&nbsp; ${pass}</p>`,
+        });
+        console.log("Bank registration email sent successfully to:", bank.email);
+      } catch (emailError) {
+        console.error("========================================");
+        console.error("EMAIL ERROR (Bank registration still successful):");
+        console.error("Error message:", emailError.message);
+        console.error("Error code:", emailError.code);
+        console.error("========================================");
+        // Continue with registration even if email fails
+      }
+      
       res.status(200).json({
         message: "Registered Successfully",
         data: {
@@ -200,7 +279,7 @@ module.exports.register = async (req, res) => {
             kycId: kycId,
             password: hash,
           });
-          const token = jwt.sign({ email: user.email }, process.env.JWT_SECRET);
+          const token = jwt.sign({ email: user.email }, process.env.JWT_SECRET || 'dev_jwt_secret');
           await user.save();
           
           try {
@@ -250,7 +329,7 @@ module.exports.login = async (req, res) => {
           success: false,
         });
       }
-      const token = jwt.sign({ email: user.email }, process.env.JWT_SECRET);
+      const token = jwt.sign({ email: user.email }, process.env.JWT_SECRET || 'dev_jwt_secret');
       res.status(200).json({
         message: "User logged in successfully",
         data: {
@@ -267,7 +346,7 @@ module.exports.login = async (req, res) => {
           success: false,
         });
       }
-      const token = jwt.sign({ email: bank.email }, process.env.JWT_SECRET);
+      const token = jwt.sign({ email: bank.email }, process.env.JWT_SECRET || 'dev_jwt_secret');
       res.status(200).json({
         message: "Bank logged in successfully",
         data: {
@@ -300,10 +379,45 @@ module.exports.request = async (req, res) => {
   try {
     const user = req.user;
     const { bAddress, response } = req.body;
-    const receipt = await handelRequest(user.kycId, bAddress, response);
+
+    const isApproved =
+      response === true ||
+      response === "true" ||
+      response === 1 ||
+      response === "1";
+
+    let receipt = null;
+    try {
+      receipt = await handelRequest(user.kycId, bAddress, response);
+    } catch (blockchainError) {
+      console.log(
+        "Blockchain request handling failed, using database fallback:",
+        blockchainError.message
+      );
+    }
+
+    const bankRequest = await BankRequest.findOne({
+      clientKycId: user.kycId,
+      $or: [
+        { bankEthAddress: bAddress },
+        { bankEmail: bAddress },
+      ],
+    });
+
+    if (bankRequest) {
+      bankRequest.status = isApproved ? "approved" : "rejected";
+      bankRequest.history.push({
+        action: "client_response",
+        message: isApproved ? "Client approved the request" : "Client rejected the request",
+      });
+      await bankRequest.save();
+    }
+
     res.status(200).json({
-      transactionHash: receipt.transactionHash,
-      message: "Response sent successfuly",
+      transactionHash: receipt ? receipt.transactionHash : null,
+      message: isApproved
+        ? "Request approved successfully"
+        : "Request declined successfully",
       success: true,
     });
   } catch (error) {
@@ -317,24 +431,144 @@ module.exports.request = async (req, res) => {
 
 module.exports.getClientData = async (req, res) => {
   try {
+    // req.user from passport JWT should already have the full user, but let's fetch fresh from DB to be sure
+    const userFromJWT = req.user;
+    const user = await User.findOne({ email: userFromJWT.email });
+    
+    if (!user) {
+      console.error("User not found for email:", userFromJWT.email);
+      return res.status(404).json({
+        error: "User not found",
+        message: "User not found in database",
+        success: false,
+      });
+    }
+    
+    console.log("Fetching client data for user:", {
+      email: user.email,
+      kycId: user.kycId,
+      hasName: !!user.name,
+      hasPhone: !!user.phone,
+      hasAddress: !!user.address,
+      hasPanFile: !!user.panFile,
+      hasAadharFile: !!user.aadharFile,
+      hasSelfieFile: !!user.selfieFile,
+    });
+    
+    // Try to get data from blockchain first, but fallback to database if it fails
+    let bcData = null;
+    try {
+      bcData = await getDetails(user.kycId);
+      console.log("Blockchain data retrieved successfully");
+    } catch (blockchainError) {
+      console.log("Blockchain data not available, using database data:", blockchainError.message);
+      // Continue to use database data
+    }
+    
+    // If blockchain data exists, use it; otherwise use database data
+    const userData = bcData ? {
+      email: user.email,
+      kycId: user.kycId,
+      name: bcData.name,
+      phone: bcData.phone,
+      address: bcData.customerAddress,
+      gender: bcData.gender,
+      dob: bcData.dob,
+      pan: bcData.PAN,
+      records: bcData.records || [],
+      requestList: bcData.requestList || [],
+      approvedBanks: bcData.approvedBanks || [],
+      kycHistory: bcData.kycHistory || [],
+      kycStatus: bcData.kycStatus || "0",
+    } : {
+      // Fallback to database data
+      email: user.email,
+      kycId: user.kycId,
+      name: user.name || "",
+      phone: user.phone || "",
+      address: user.address || "",
+      gender: user.gender || "",
+      dob: user.dob || "",
+      pan: user.PANno || "",
+      // Format records as expected by frontend: [["Document Name", "path"], ...]
+      records: [
+        ["PAN Card", user.panFile || ""],
+        ["Aadhar Card", user.aadharFile || ""],
+        ["Selfie", user.selfieFile || ""],
+      ],
+      requestList: [],
+      approvedBanks: [],
+      kycHistory: [],
+      kycStatus: "0", // Not initiated
+    };
+    
+    console.log("Sending user data to client:", {
+      name: userData.name,
+      phone: userData.phone,
+      address: userData.address,
+      recordsCount: userData.records.length,
+      records: userData.records,
+    });
+    
+    res.status(200).json({
+      message: bcData ? "Data Fetched from Blockchain" : "Data Fetched from Database",
+      data: userData,
+      success: true,
+    });
+  } catch (error) {
+    console.error("getClientData error:", error);
+    res.status(500).json({
+      error: error.message,
+      message: "Something went wrong",
+      success: false,
+    });
+  }
+};
+
+module.exports.getBankList = async (req, res) => {
+  try {
     const user = req.user;
-    const bcData = await getDetails(user.kycId);
+    let bankList = null;
+    try {
+      bankList = await getReqList(user.kycId);
+    } catch (blockchainError) {
+      console.log(
+        "Blockchain data not available for bank list, using database requests:",
+        blockchainError.message
+      );
+    }
+
+    if (!bankList) {
+      const pendingRequests = await BankRequest.find({
+        clientKycId: user.kycId,
+        status: "pending",
+      }).sort({ createdAt: -1 });
+
+      const approvedRequests = await BankRequest.find({
+        clientKycId: user.kycId,
+        status: "approved",
+      }).sort({ updatedAt: -1 });
+
+      const mapRequest = (request) => [
+        request.bankName || request.bankEmail,
+        request.bankEthAddress || request.bankEmail,
+      ];
+
+      return res.status(200).json({
+        message: "Data Fetched from Database",
+        data: {
+          pendingBanks: pendingRequests.map(mapRequest),
+          approvedBanks: approvedRequests.map(mapRequest),
+        },
+        success: true,
+      });
+    }
+
     res.status(200).json({
       message: "Data Fetched from Blockchain",
       data: {
-        email: user.email,
-        kycId: user.kycId,
-        name: bcData.name,
-        phone: bcData.phone,
-        address: bcData.customerAddress,
-        gender: bcData.gender,
-        dob: bcData.dob,
-        pan: bcData.PAN,
-        records: bcData.records,
-        requestList: bcData.requestList,
-        approvedBanks: bcData.approvedBanks,
-        kycHistory: bcData.kycHistory,
-        kycStatus: bcData.kycStatus,
+        pendingBanks: bankList?.pendingBanks || [],
+        approvedBanks: bankList?.approvedBanks || [],
       },
       success: true,
     });
@@ -347,23 +581,243 @@ module.exports.getClientData = async (req, res) => {
   }
 };
 
-module.exports.getBankList = async (req, res) => {
+module.exports.getBankProfile = async (req, res) => {
   try {
-    const user = req.user;
-    const bankList = await getReqList(user.kycId);
+    if (!req.user || req.user.userType !== "bank") {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized access",
+      });
+    }
+
+    // req.user might already contain the bank document, but fetch fresh to avoid stale data
+    const bank = await Bank.findOne({ email: req.user.email });
+    if (!bank) {
+      return res.status(404).json({
+        success: false,
+        message: "Bank profile not found",
+      });
+    }
+
     res.status(200).json({
-      message: "Data Fetched from Blockchain",
-      data: {
-        pendingBanks: bankList.pendingBanks,
-        approvedBanks: bankList.approvedBanks,
-      },
       success: true,
+      data: {
+        email: bank.email,
+        bankName: bank.bankName || "",
+        bankAddress: bank.bankAddress || "",
+        contactNumber: bank.contactNumber || "",
+        ethAddress: bank.ethAddress || "",
+      },
     });
   } catch (error) {
     res.status(500).json({
-      error: error.message,
-      message: "Something went wrong",
       success: false,
+      message: error.message || "Failed to fetch bank profile",
+    });
+  }
+};
+
+module.exports.getBankRequests = async (req, res) => {
+  try {
+    if (!req.user || req.user.userType !== "bank") {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized access",
+      });
+    }
+
+    const pending = await BankRequest.find({
+      bankEmail: req.user.email,
+      status: "pending",
+    }).sort({ createdAt: -1 });
+
+    const approved = await BankRequest.find({
+      bankEmail: req.user.email,
+      status: "approved",
+    }).sort({ updatedAt: -1 });
+
+    const allRequests = [...pending, ...approved];
+    const kycIds = allRequests.map((request) => request.clientKycId);
+    const clients = await User.find({ kycId: { $in: kycIds } });
+    const clientMap = new Map(
+      clients.map((client) => [client.kycId, client])
+    );
+
+    res.status(200).json({
+      success: true,
+      data: {
+        pending: pending.map((request) => ({
+          id: request._id,
+          clientKycId: request.clientKycId,
+           clientName: clientMap.get(request.clientKycId)?.name || "",
+           clientEmail: clientMap.get(request.clientKycId)?.email || "",
+          status: request.status,
+          createdAt: request.createdAt,
+          updatedAt: request.updatedAt,
+        })),
+        approved: approved.map((request) => ({
+          id: request._id,
+          clientKycId: request.clientKycId,
+          clientName: clientMap.get(request.clientKycId)?.name || "",
+          clientEmail: clientMap.get(request.clientKycId)?.email || "",
+          status: request.status,
+          createdAt: request.createdAt,
+          updatedAt: request.updatedAt,
+        })),
+      },
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to fetch bank requests",
+    });
+  }
+};
+
+module.exports.createBankRequest = async (req, res) => {
+  try {
+    if (!req.user || req.user.userType !== "bank") {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized access",
+      });
+    }
+
+    const { clientKycId } = req.body;
+    if (!clientKycId) {
+      return res.status(400).json({
+        success: false,
+        message: "Client KYC ID is required",
+      });
+    }
+
+    const client = await User.findOne({ kycId: clientKycId });
+    if (!client) {
+      return res.status(404).json({
+        success: false,
+        message: "No client found with the provided KYC ID",
+      });
+    }
+
+    const existing = await BankRequest.findOne({
+      bankEmail: req.user.email,
+      clientKycId,
+      status: { $in: ["pending", "approved"] },
+    });
+
+    if (existing) {
+      return res.status(400).json({
+        success: false,
+        message:
+          existing.status === "pending"
+            ? "A request for this client is already pending"
+            : "This client has already approved access for your bank",
+      });
+    }
+
+    const request = await BankRequest.create({
+      bankEmail: req.user.email,
+      bankName: req.user.bankName || req.body.bankName || req.user.email,
+      bankEthAddress: req.user.ethAddress || "",
+      clientKycId,
+      status: "pending",
+      history: [
+        {
+          action: "request_created",
+          message: "Bank requested access to client data",
+        },
+      ],
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Access request created successfully",
+      data: request,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to create bank request",
+    });
+  }
+};
+
+module.exports.accessClientData = async (req, res) => {
+  try {
+    if (!req.user || req.user.userType !== "bank") {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized access",
+      });
+    }
+
+    const { clientKycId } = req.body;
+    if (!clientKycId) {
+      return res.status(400).json({
+        success: false,
+        message: "Client KYC ID is required",
+      });
+    }
+
+    const bankRequest = await BankRequest.findOne({
+      bankEmail: req.user.email,
+      clientKycId,
+    });
+
+    if (!bankRequest) {
+      return res.status(404).json({
+        success: false,
+        message: "No request found for this client",
+      });
+    }
+
+    if (bankRequest.status !== "approved") {
+      return res.status(403).json({
+        success: false,
+        message: "Client has not approved access yet",
+      });
+    }
+
+    const client = await User.findOne({ kycId: clientKycId });
+    if (!client) {
+      return res.status(404).json({
+        success: false,
+        message: "Client not found",
+      });
+    }
+
+    const clientData = {
+      email: client.email,
+      kycId: client.kycId,
+      name: client.name || "",
+      phone: client.phone || "",
+      address: client.address || "",
+      gender: client.gender || "",
+      dob: client.dob || "",
+      pan: client.PANno || "",
+      records: [
+        ["PAN Card", client.panFile || ""],
+        ["Aadhar Card", client.aadharFile || ""],
+        ["Selfie", client.selfieFile || ""],
+      ],
+      kycHistory: [],
+      kycStatus: "1",
+    };
+
+    bankRequest.history.push({
+      action: "data_accessed",
+      message: "Bank viewed client data",
+    });
+    await bankRequest.save();
+
+    res.status(200).json({
+      success: true,
+      data: clientData,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to access client data",
     });
   }
 };

@@ -7,6 +7,7 @@ import VerifyClient from "./VerifyClient.jsx";
 import { Card, Button, Input, Modal, message } from "antd";
 import { UserOutlined } from "@ant-design/icons";
 import { baseURL } from "../../api";
+import ClientDataCard from "../Client/ClientData";
 
 const Bank = () => {
   const history = useHistory();
@@ -23,15 +24,151 @@ const Bank = () => {
   const [userDataFooters, setUserDataFooters] = useState([]);
   const [addRemPop, setaddRemPop] = useState(false);
   const [remarks, setremarks] = useState("");
+  const [usingBlockchain, setUsingBlockchain] = useState(false);
+
+  const token = localStorage.getItem("bankToken");
+  const authHeaders = token
+    ? {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      }
+    : { "Content-Type": "application/json" };
 
   useEffect(() => {
     setup();
   }, []);
 
+  useEffect(() => {
+    if (!token) {
+      return;
+    }
+    fetchBankProfile();
+    fetchBankRequests();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
   const setup = async () => {
-    let [tempDmr, tempAcc] = await InitialiseWeb3();
-    setDmr(tempDmr);
-    setAccounts(tempAcc);
+    try {
+      let [tempDmr, tempAcc] = await InitialiseWeb3();
+      if (tempDmr && tempAcc) {
+        setDmr(tempDmr);
+        setAccounts(tempAcc);
+        setUsingBlockchain(true);
+      }
+    } catch (error) {
+      console.log(
+        "Web3/MetaMask not available, continuing with API fallback:",
+        error.message
+      );
+      setUsingBlockchain(false);
+    }
+  };
+
+  const fetchBankProfile = async () => {
+    if (!token) {
+      message.error("Please login as bank to continue");
+      history.push("/");
+      return;
+    }
+    try {
+      const response = await fetch(`${baseURL}/bank/profile`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const result = await response.json();
+      if (result.success) {
+        setBankDetails({
+          bName: result.data.bankName,
+          bAddress: result.data.bankAddress,
+          bWallet: result.data.ethAddress,
+          contactNumber: result.data.contactNumber,
+        });
+      } else {
+        message.error(result.message || "Failed to fetch bank profile");
+        const localInfo = localStorage.getItem("bankInfo");
+        if (localInfo) {
+          const parsed = JSON.parse(localInfo);
+          setBankDetails({
+            bName: parsed.bankName || parsed.email || "",
+            bAddress: parsed.bankAddress || "",
+            bWallet: parsed.ethAddress || "",
+            contactNumber: parsed.contactNumber || "",
+          });
+        }
+      }
+    } catch (error) {
+      console.log(error);
+      message.error("Failed to fetch bank profile");
+      const localInfo = localStorage.getItem("bankInfo");
+      if (localInfo) {
+        const parsed = JSON.parse(localInfo);
+        setBankDetails({
+          bName: parsed.bankName || parsed.email || "",
+          bAddress: parsed.bankAddress || "",
+          bWallet: parsed.ethAddress || "",
+          contactNumber: parsed.contactNumber || "",
+        });
+      }
+    }
+  };
+
+  const fetchBankRequests = async () => {
+    if (!token) return;
+    try {
+      const response = await fetch(`${baseURL}/bank/requests`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      const result = await response.json();
+      if (result.success) {
+        setPendingClientRequests(result.data.pending || []);
+        setApprovedClients(result.data.approved || []);
+      } else {
+        message.error(result.message || "Failed to fetch requests");
+      }
+    } catch (error) {
+      console.log(error);
+      message.error("Failed to fetch requests");
+    }
+  };
+
+  const showClientDataPopup = (clientInfo) => {
+    togglePopup(clientInfo, [
+      <Button
+        type="primary"
+        onClick={() => handelStartvKYC(clientInfo.kycId)}
+      >
+        Start vKYC
+      </Button>,
+      <Button key="close" onClick={() => setIsPopupOpen(false)}>
+        Close
+      </Button>,
+    ]);
+  };
+
+  const fetchClientDataDetails = async (kycId) => {
+    try {
+      const response = await fetch(`${baseURL}/bank/access`, {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ clientKycId: kycId }),
+      });
+      const result = await response.json();
+      if (result.success) {
+        showClientDataPopup(result.data);
+        fetchBankRequests();
+        return true;
+      } else {
+        message.error(result.message || "Failed to fetch client data");
+        return false;
+      }
+    } catch (error) {
+      console.log(error);
+      message.error("Failed to fetch client data");
+      return false;
+    }
   };
 
   const getBankDetails = async () => {
@@ -77,59 +214,70 @@ const Bank = () => {
     // eslint-disable-next-line
   }, [dmr, accounts]);
 
-  const handleSendRequest = (e) => {
+  const handleSendRequest = async (e) => {
     e.preventDefault();
-    setisLoading(true);
-    if (dmr && accounts) {
-      dmr.methods
-        .addRequest(customerKycId)
-        .send({ from: accounts[0] })
-        .then((res) => {
-          setisLoading(false);
-          message.success("Request sent!");
-          getBankData();
-          setCustomerKycId("");
-        })
-        .catch((err) => {
-          setisLoading(false);
-          message.error("Something went wrong!");
-          console.log(err);
-        });
+    if (!customerKycId) {
+      message.warning("Please enter a client KYC ID");
+      return;
     }
+    if (!token) {
+      message.error("Please login as bank");
+      history.push("/");
+      return;
+    }
+    setisLoading(true);
+
+    const hide = message.loading("Waiting for MetaMask confirmation...", 1.5);
+
+    try {
+      const response = await fetch(`${baseURL}/bank/request`, {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({ clientKycId: customerKycId }),
+      });
+      const result = await response.json();
+      hide();
+      if (result.success) {
+        message.success("Request sent! Awaiting client approval.");
+        setCustomerKycId("");
+        fetchBankRequests();
+      } else {
+        message.error(result.message || "Failed to send request");
+      }
+    } catch (error) {
+      console.log(error);
+      hide();
+      message.error("Failed to send request");
+    }
+
+    setisLoading(false);
   };
 
-  const handleRequestData = (e) => {
+  const handleRequestData = async (e) => {
     e.preventDefault();
-    setisLoading(true);
-    console.log(customerKycIdData);
-    if (dmr && accounts) {
-      dmr.methods
-        .getCustomerDetails(customerKycIdData)
-        .call({ from: accounts[0] })
-        .then((res) => {
-          setisLoading(false);
-          message.success("Request sent!");
-          console.log(res);
-          togglePopup(res, [
-            <Button type="primary" onClick={() => handleKycVerdict(1)}>
-              Accept KYC
-            </Button>,
-            <Button type="primary" onClick={() => handleKycVerdict(3)}>
-              Revoke KYC
-            </Button>,
-          ]);
-          setCustomerKycIdData("");
-        })
-        .catch((err) => {
-          setisLoading(false);
-          message.error("Something went wrong!");
-          console.log(err);
-        });
+    if (!customerKycIdData) {
+      message.warning("Please enter a client KYC ID");
+      return;
     }
+    if (!token) {
+      message.error("Please login as bank");
+      history.push("/");
+      return;
+    }
+    setisLoading(true);
+    message.loading({ content: "Confirming access via MetaMask...", key: "access" });
+    const success = await fetchClientDataDetails(customerKycIdData);
+    message.destroy("access");
+    if (success) {
+      message.success("Client data retrieved successfully");
+      setCustomerKycIdData("");
+    }
+    setisLoading(false);
   };
 
   const handelLogout = () => {
     localStorage.removeItem("bankToken");
+    localStorage.removeItem("bankInfo");
     history.push("/");
   };
 
@@ -171,7 +319,22 @@ const Bank = () => {
 
   const handleVerdict = (verdict) => {
     console.log(remarks);
-    if (dmr && accounts && clientData && remarks.length>0) {
+    if (!usingBlockchain || !dmr || !accounts) {
+      if (!clientData) {
+        message.warning("No client data available");
+        return;
+      }
+      if (!remarks.length) {
+        message.warning("Please add remarks");
+        return;
+      }
+      message.success("Remarks recorded (simulation)");
+      handelAddRemarksPopup();
+      setIsPopupOpen(false);
+      setremarks("");
+      return;
+    }
+    if (dmr && accounts && clientData && remarks.length > 0) {
       dmr.methods
         .updateKycStatus(
           clientData.kycId,
@@ -185,6 +348,7 @@ const Bank = () => {
           getBankData();
           handelAddRemarksPopup();
           setIsPopupOpen((prev) => {return !prev;});
+          setremarks("");
         })
         .catch((err) => {
           console.log(err);
@@ -217,26 +381,35 @@ const Bank = () => {
           footer={[
             <Button
               type="primary"
-              onClick={() => handleVerdict(2)} 
+              danger
+              onClick={() => handleVerdict(2)}
+              disabled={remarks.length === 0}
             >
               Reject KYC
             </Button>,
             <Button
               type="primary"
-              onClick={() => handleVerdict(1)} 
+              onClick={() => handleVerdict(1)}
+              disabled={remarks.length === 0}
             >
               Accept KYC
-            </Button>
+            </Button>,
           ]}
         >
           <Input
             placeholder="Enter Remarks"
             value={remarks}
             onChange={(e) => setremarks(e.target.value)}
-          ></Input>
+          />
         </Modal>
-        {clientData && (
-          <VerifyClient dmr={dmr} accounts={accounts} data={clientData} />
+        {clientData ? (
+          usingBlockchain && dmr && accounts ? (
+            <VerifyClient dmr={dmr} accounts={accounts} data={clientData} />
+          ) : (
+            <ClientDataCard userData={clientData} />
+          )
+        ) : (
+          <div>No client data loaded</div>
         )}
       </Modal>
       <div
@@ -271,14 +444,18 @@ const Bank = () => {
         </div>
 
         <Card title="Bank Details" my={"50px"} hoverable>
-          {bankDetails && (
+          {bankDetails ? (
             <Card type="inner" hoverable>
-              Name: {bankDetails.bName}
+              <strong>Name:</strong> {bankDetails.bName || "N/A"}
               <br />
-              Address: {bankDetails.bAddress}
+              <strong>Address:</strong> {bankDetails.bAddress || "N/A"}
               <br />
-              Etherium Address: {bankDetails.bWallet}
+              <strong>Contact:</strong> {bankDetails.contactNumber || "N/A"}
+              <br />
+              <strong>Wallet:</strong> {bankDetails.bWallet || "N/A"}
             </Card>
+          ) : (
+            "No bank profile found"
           )}
         </Card>
         <Card title="Request Access" style={{ margin: "20px 0" }} hoverable>
@@ -338,7 +515,12 @@ const Bank = () => {
                       borderRadius: "9px",
                     }}
                   >
-                    {req.name}
+                    <div style={{ fontWeight: 600 }}>
+                      {req.clientName || req.clientKycId}
+                    </div>
+                    <div style={{ fontSize: "12px", color: "#666" }}>
+                      {req.clientKycId}
+                    </div>
                   </Card.Grid>
                 );
               })
@@ -361,31 +543,14 @@ const Bank = () => {
                       fontSize: "15px",
                       borderRadius: "9px",
                     }}
-                    onClick={() =>
-                      togglePopup(req, [
-                        <Button type="primary" onClick={()=>handelStartvKYC(req.kycId)}>
-                          Start vKYC
-                        </Button>,
-                        <Button
-                          type="primary"
-                          onClick={handelAddRemarksPopup} 
-                        >
-                          Proceed without vKYC
-                        </Button>,
-                        <Button
-                          key="back"
-                          onClick={() =>
-                            setIsPopupOpen((prev) => {
-                              return !prev;
-                            })
-                          }
-                        >
-                          Cancel
-                        </Button>,
-                      ])
-                    }
+                    onClick={() => fetchClientDataDetails(req.clientKycId)}
                   >
-                    {req.name}
+                    <div style={{ fontWeight: 600 }}>
+                      {req.clientName || req.clientKycId}
+                    </div>
+                    <div style={{ fontSize: "12px", color: "#666" }}>
+                      {req.clientKycId}
+                    </div>
                   </Card.Grid>
                 );
               })

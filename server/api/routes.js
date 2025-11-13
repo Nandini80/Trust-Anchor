@@ -11,7 +11,11 @@ const {
   request,
   updateRecord,
   updateSocket,
-  getSocket
+  getSocket,
+  getBankProfile,
+  getBankRequests,
+  createBankRequest,
+  accessClientData,
 } = require("./controllers/userController");
 
 router.get("/", home);
@@ -64,6 +68,10 @@ router.post("/uploadDocuments", upload.fields([
 });
 router.post("/updateSocket", passport.authenticate("jwt", { session: false }), updateSocket);
 router.post("/getSocket", getSocket);
+router.get("/bank/profile", passport.authenticate("jwt", { session: false }), getBankProfile);
+router.get("/bank/requests", passport.authenticate("jwt", { session: false }), getBankRequests);
+router.post("/bank/request", passport.authenticate("jwt", { session: false }), createBankRequest);
+router.post("/bank/access", passport.authenticate("jwt", { session: false }), accessClientData);
 
 
 router.get("*", notFound);

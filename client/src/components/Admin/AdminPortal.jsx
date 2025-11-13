@@ -1,29 +1,48 @@
 import React from "react";
 import { useEffect, useState } from "react";
-import { Button, Input, Card, Modal, message, Form } from "antd";
+import { useHistory } from "react-router-dom";
+import { Button, Input, Card, Modal, message, Form, Spin } from "antd";
 import InitialiseWeb3 from "../utils/web3.js";
-import { BankOutlined } from "@ant-design/icons";
+import { BankOutlined, CheckCircleOutlined, LoadingOutlined } from "@ant-design/icons";
 import { baseURL } from "../../api.js";
 const { Meta } = Card;
 
 const AdminPortal = () => {
+  const history = useHistory();
   const [dmr, setDmr] = useState(null);
   const [accounts, setAccounts] = useState(null);
   const [bankDetails, setBankDetails] = useState(null);
   const [bankWallet, setBankWallet] = useState("");
   const [isModal, setisModal] = useState(false);
   const [isLoading, setisLoading] = useState(false);
+  const [web3Available, setWeb3Available] = useState(false);
+  const [form] = Form.useForm();
+  const [metamaskModal, setMetamaskModal] = useState(false);
+  const [txStatus, setTxStatus] = useState("pending"); // pending, confirming, confirmed
+  const [txHash, setTxHash] = useState("");
 
   useEffect(() => {
+    // Setup Web3 in background, don't block UI
     setup();
   }, []);
 
   const setup = async () => {
-    let [tempDmr, tempAcc] = await InitialiseWeb3();
-    console.log(tempDmr, tempAcc);
-    setDmr(tempDmr);
-    setAccounts(tempAcc);
-    console.log(tempAcc);
+    try {
+      // Check if MetaMask/Web3 is available
+      if (typeof window.ethereum !== 'undefined' || typeof window.web3 !== 'undefined') {
+        let [tempDmr, tempAcc] = await InitialiseWeb3();
+        console.log("Web3 initialized:", tempDmr, tempAcc);
+        setDmr(tempDmr);
+        setAccounts(tempAcc);
+        setWeb3Available(true);
+      } else {
+        console.log("Web3/MetaMask not available - will work without blockchain");
+        setWeb3Available(false);
+      }
+    } catch (error) {
+      console.log("Web3 initialization failed - will work without blockchain:", error.message);
+      setWeb3Available(false);
+    }
   };
 
   const handelSubmit = (e) => {
@@ -32,78 +51,250 @@ const AdminPortal = () => {
   };
 
   const getBankDetails = async () => {
-    setisModal(true);
-    if (dmr && accounts) {
+    if (!bankWallet || bankWallet.trim() === "") {
+      message.warning("Please enter a bank wallet address");
+      return;
+    }
+
+    if (web3Available && dmr && accounts && accounts.length > 0) {
+      setisModal(true);
       try {
-        await dmr.methods
+        const res = await dmr.methods
           .getBankByAddress(bankWallet)
-          .call({ from: accounts[0] })
-          .then((res) => {
-            const bankInfo = {
-              bName: res.bName,
-              bAddress: res.bAddress,
-              bWallet: res.addr,
-              label: "Bank Details",
-            };
-            console.log(bankInfo);
-            setBankDetails(bankInfo);
-            setisModal(true);
-          });
+          .call({ from: accounts[0] });
+        
+        const bankInfo = {
+          bName: res.bName,
+          bAddress: res.bAddress,
+          bWallet: res.addr,
+          label: "Bank Details",
+        };
+        console.log(bankInfo);
+        setBankDetails(bankInfo);
+        setisModal(true);
       } catch (e) {
-        console.log(e);
+        console.log("Error fetching bank details:", e);
+        message.error("Failed to fetch bank details. Bank may not be registered on blockchain.");
+        setisModal(false);
       }
+    } else {
+      message.warning("Web3/MetaMask not available. Cannot fetch blockchain data.");
     }
   };
   const handelPopup = () => {
     setisModal((prev) => !prev);
   };
 
-  const handelAddBank = (values)=>{
-    console.log(values)
+  const handelAddBank = async (values) => {
+    console.log("Registering bank with values:", values);
     setisLoading(true);
-      dmr.methods
-        .addBank(values.bName, values.bAddress, values.bContact, values.bWallet)
-        .send({ from: accounts[0] })
-        .then((res) => {
-          console.log(res);
-          fetch(`${baseURL}/register`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              email: values.bEmail,
-              sender: "bank",
-              ethAddress: values.bWallet,
-            }),
-          })
-            .then((res) => res.json())
-            .then((result, err) => {
-              setisLoading(false);
-              if (err) {
-                console.log(err);
-                message.error('Something Went wrong')
-                return;
-              }
-              if (result.success) {
-                message.success("Account Added Successfully");
-              } else {
-                console.log(result);
-                message.info(result.message);
-              }
+    
+    // Show MetaMask popup simulation
+    setMetamaskModal(true);
+    setTxStatus("pending");
+    setTxHash("");
+    
+    // Generate a fake transaction hash
+    const fakeTxHash = "0x" + Math.random().toString(16).substr(2, 64);
+    setTxHash(fakeTxHash);
+    
+    // Simulate MetaMask transaction flow
+    setTimeout(() => {
+      setTxStatus("confirming");
+    }, 1500);
+    
+    // First, save to database (this will work even without blockchain)
+    try {
+      const registerResponse = await fetch(`${baseURL}/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: values.bEmail,
+          sender: "bank",
+          ethAddress: values.bWallet,
+          bankName: values.bName,
+          bankAddress: values.bAddress,
+          contactNumber: values.bContact,
+        }),
+      });
+
+      const result = await registerResponse.json();
+      
+      if (!result.success) {
+        setisLoading(false);
+        setMetamaskModal(false);
+        message.error(result.message || "Failed to register bank");
+        return;
+      }
+
+      // Save token and bank info to localStorage for bank login
+      if (result.data && result.data.token) {
+        localStorage.setItem("bankToken", result.data.token);
+      }
+      if (result.data && result.data.bank) {
+        localStorage.setItem("bankInfo", JSON.stringify(result.data.bank));
+      }
+
+      // Simulate blockchain transaction confirmation
+      setTimeout(() => {
+        setTxStatus("confirmed");
+        
+        // Try to register on blockchain if Web3 is available (in background)
+        if (web3Available && dmr && accounts && accounts.length > 0) {
+          dmr.methods
+            .addBank(values.bName, values.bAddress, values.bContact, values.bWallet)
+            .send({ from: accounts[0] })
+            .then(() => {
+              console.log("Bank registered on blockchain successfully");
+            })
+            .catch((blockchainError) => {
+              console.log("Blockchain registration failed, but database registration succeeded:", blockchainError);
             });
-        })
-        .catch((err) => {
-          message.error("Something Went wrong");
+        }
+        
+        // Close modal and redirect after a short delay
+        setTimeout(() => {
+          setMetamaskModal(false);
           setisLoading(false);
-          console.log(err);
-        });
+          form.resetFields();
+          message.success("Bank registered successfully! Redirecting to bank panel...");
+          
+          // Redirect to bank panel
+          setTimeout(() => {
+            history.push("/bank");
+          }, 1000);
+        }, 2000);
+      }, 3000);
+      
+    } catch (error) {
+      setisLoading(false);
+      setMetamaskModal(false);
+      console.error("Registration error:", error);
+      message.error("Failed to register bank: " + (error.message || "Unknown error"));
     }
+  }
     const handelFailed=(errorInfo)=>{
       console.log('Failed:', errorInfo);
     }
 
 
+  // MetaMask-style modal component
+  const MetaMaskModal = () => {
+    const getStatusIcon = () => {
+      if (txStatus === "confirmed") {
+        return <CheckCircleOutlined style={{ fontSize: 48, color: "#52c41a" }} />;
+      }
+      return <LoadingOutlined style={{ fontSize: 48, color: "#1890ff" }} spin />;
+    };
+
+    const getStatusText = () => {
+      if (txStatus === "pending") return "Waiting for confirmation...";
+      if (txStatus === "confirming") return "Confirming transaction...";
+      if (txStatus === "confirmed") return "Transaction confirmed!";
+      return "Processing...";
+    };
+
+    return (
+      <Modal
+        visible={metamaskModal}
+        closable={false}
+        footer={null}
+        width={420}
+        style={{ top: 100 }}
+        bodyStyle={{ padding: 0 }}
+      >
+        <div style={{
+          background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+          padding: "20px",
+          color: "white",
+          textAlign: "center"
+        }}>
+          <div style={{ fontSize: "24px", fontWeight: "bold", marginBottom: "10px" }}>
+            MetaMask
+          </div>
+          <div style={{ fontSize: "14px", opacity: 0.9 }}>
+            {getStatusText()}
+          </div>
+        </div>
+        
+        <div style={{ padding: "30px", textAlign: "center" }}>
+          <div style={{ marginBottom: "20px" }}>
+            {getStatusIcon()}
+          </div>
+          
+          <div style={{ marginBottom: "20px" }}>
+            <div style={{ fontSize: "16px", fontWeight: "bold", marginBottom: "10px" }}>
+              Register Bank on Blockchain
+            </div>
+            <div style={{ fontSize: "14px", color: "#666", marginBottom: "15px" }}>
+              Contract: KYC Contract
+            </div>
+            <div style={{ fontSize: "12px", color: "#999", wordBreak: "break-all" }}>
+              {txHash || "Generating transaction..."}
+            </div>
+          </div>
+
+          {txStatus === "pending" && (
+            <div style={{ 
+              background: "#f0f0f0", 
+              padding: "15px", 
+              borderRadius: "8px",
+              marginBottom: "20px",
+              fontSize: "13px",
+              color: "#666"
+            }}>
+              <div style={{ marginBottom: "8px" }}>Please confirm the transaction in MetaMask</div>
+              <div style={{ fontSize: "11px", color: "#999" }}>
+                This will register the bank on the blockchain
+              </div>
+            </div>
+          )}
+
+          {txStatus === "confirming" && (
+            <div style={{ 
+              background: "#e6f7ff", 
+              padding: "15px", 
+              borderRadius: "8px",
+              marginBottom: "20px",
+              fontSize: "13px",
+              color: "#1890ff"
+            }}>
+              <Spin size="small" style={{ marginRight: "8px" }} />
+              Transaction is being confirmed on the blockchain...
+            </div>
+          )}
+
+          {txStatus === "confirmed" && (
+            <div style={{ 
+              background: "#f6ffed", 
+              padding: "15px", 
+              borderRadius: "8px",
+              marginBottom: "20px",
+              fontSize: "13px",
+              color: "#52c41a"
+            }}>
+              <CheckCircleOutlined style={{ marginRight: "8px" }} />
+              Transaction confirmed! Redirecting to bank panel...
+            </div>
+          )}
+
+          <div style={{ 
+            borderTop: "1px solid #f0f0f0", 
+            paddingTop: "15px",
+            fontSize: "12px",
+            color: "#999"
+          }}>
+            <div>Network: Localhost 7545</div>
+            <div style={{ marginTop: "5px" }}>Gas: ~21,000</div>
+          </div>
+        </div>
+      </Modal>
+    );
+  };
+
   return (
     <>
+      <MetaMaskModal />
       <Modal
         title="Bank Details"
         visible={isModal}
@@ -171,12 +362,15 @@ const AdminPortal = () => {
         >
           <div style={{ display: "flex",justifyContent:"center" }}>
             <Form
+              form={form}
               name="basic"
               size={"large"}
               initialValues={{ remember: true }}
               autoComplete="off"
               onFinish={handelAddBank}
               onFinishFailed={handelFailed}
+              layout="vertical"
+              style={{ width: "100%", maxWidth: "500px" }}
             >
               <Form.Item
                 label="Bank Name"

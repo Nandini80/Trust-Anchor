@@ -16,6 +16,10 @@ const BankSchema = new Schema({
     required: true,
     unique: true,
   },
+  // Store additional bank details
+  bankName: String,
+  bankAddress: String,
+  contactNumber: String,
   timestamp: {
     type: Date,
     default: Date.now,

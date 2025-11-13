@@ -31,9 +31,16 @@ const Client = () => {
         }
         if (result.success) {
           message.success(result.message);
+          console.log("User data received:", result.data);
           setUserData(result.data);
+        } else {
+          console.error("Failed to get client data:", result);
+          message.error(result.message || "Failed to load client data");
         }
-        console.log(result);
+      })
+      .catch((error) => {
+        console.error("Error fetching client data:", error);
+        message.error("Network error while fetching client data");
       });
   };
 
