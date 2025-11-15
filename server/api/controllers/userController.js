@@ -977,3 +977,124 @@ module.exports.getSocket = async (req, res) => {
     });
   }
 };
+
+module.exports.getKycIdFromSocket = async (req, res) => {
+  try {
+    const { socket } = req.body;
+    if (!socket) {
+      return res.status(400).json({
+        success: false,
+        message: "Socket ID is required",
+      });
+    }
+
+    const user = await User.findOne({ socket });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "No user found with this socket ID",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      kycId: user.kycId,
+      message: "KYC ID fetched successfully",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || "Something went wrong",
+    });
+  }
+};
+
+module.exports.submitVkycVerdict = async (req, res) => {
+  try {
+    if (!req.user || req.user.userType !== "bank") {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized access",
+      });
+    }
+
+    const { clientKycId, verdict, remarks } = req.body;
+
+    if (!clientKycId || !remarks || !verdict) {
+      return res.status(400).json({
+        success: false,
+        message: "Client KYC ID, remarks, and verdict are required",
+      });
+    }
+
+    // Validate verdict: "1" or "2" (Accept or Reject)
+    const verdictNum = parseInt(verdict);
+    if (verdictNum !== 1 && verdictNum !== 2) {
+      return res.status(400).json({
+        success: false,
+        message: "Verdict must be 1 (Accept) or 2 (Reject)",
+      });
+    }
+
+    // Check if bank has access to this client
+    const bankRequest = await BankRequest.findOne({
+      bankEmail: req.user.email,
+      clientKycId,
+      status: "approved",
+    });
+
+    if (!bankRequest) {
+      return res.status(403).json({
+        success: false,
+        message: "No approved access found for this client",
+      });
+    }
+
+    // Handle screenshot file if provided
+    let screenshotPath = null;
+    if (req.files && req.files.documentFile) {
+      screenshotPath = `/documents/${req.files.documentFile[0].filename}`;
+    }
+
+    // Update BankRequest with remarks and verdict
+    bankRequest.remarks = remarks;
+    bankRequest.history.push({
+      action: verdictNum === 1 ? "vkyc_approved" : "vkyc_rejected",
+      message: remarks,
+      screenshot: screenshotPath,
+      timestamp: new Date(),
+    });
+    await bankRequest.save();
+
+    // Also update client's record if screenshot was provided
+    if (screenshotPath && clientKycId) {
+      try {
+        const client = await User.findOne({ kycId: clientKycId });
+        if (client) {
+          // Add video KYC record
+          const recordData = JSON.stringify({
+            verdict: verdictNum === 1 ? "accepted" : "rejected",
+            remarks: remarks,
+            image: screenshotPath,
+            timestamp: new Date().toISOString(),
+          });
+          await updateRecordBC(clientKycId, "video_kyc", recordData);
+        }
+      } catch (err) {
+        console.log("Error updating client record:", err);
+        // Don't fail the request if this fails
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: verdictNum === 1 ? "KYC approved successfully" : "KYC rejected successfully",
+      screenshotPath: screenshotPath,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to submit vKYC verdict",
+    });
+  }
+};
