@@ -16,6 +16,7 @@ const {
   getBankRequests,
   createBankRequest,
   accessClientData,
+  updateKycStatus,
 } = require("./controllers/userController");
 
 router.get("/", home);
@@ -72,6 +73,7 @@ router.get("/bank/profile", passport.authenticate("jwt", { session: false }), ge
 router.get("/bank/requests", passport.authenticate("jwt", { session: false }), getBankRequests);
 router.post("/bank/request", passport.authenticate("jwt", { session: false }), createBankRequest);
 router.post("/bank/access", passport.authenticate("jwt", { session: false }), accessClientData);
+router.post("/bank/update-kyc-status", passport.authenticate("jwt", { session: false }), updateKycStatus);
 
 
 router.get("*", notFound);
