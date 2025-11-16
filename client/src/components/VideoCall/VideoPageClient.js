@@ -12,6 +12,8 @@ const VideoPage = (props) => {
     if (!navigator.onLine) toast.error("Please connect to the internet!");
   }, []);
 
+  // Get socketId from URL params if available, otherwise use undefined
+  const socketId = props.match?.params?.socketId;
 
   return (
     <div className="videoPageBody">
@@ -29,7 +31,7 @@ const VideoPage = (props) => {
       />
       <VideoState>
         <Video />
-        <Options clientId={props.match.params.clientId} />
+        <Options clientId={socketId} />
       </VideoState>
     </div>
   );

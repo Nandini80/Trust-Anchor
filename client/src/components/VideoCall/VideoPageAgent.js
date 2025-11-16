@@ -4,21 +4,48 @@ import VideoState from "../../context/VideoState";
 import { baseURL } from "../../api";
 import Options from "./options/OptionsAgent";
 import { ToastContainer, toast } from "react-toastify";
+import { useHistory } from "react-router-dom";
 import "./VideoPage.css";
 // IPFS removed - files are now saved locally in the documents folder
 
 const VideoPage = (props) => {
+  const history = useHistory();
   const canvasEle = useRef();
   const imageEle = useRef();
   const [imageURL, setImageURL] = useState();
   const [imageFile, setImageFile] = useState();
-  const [message, setMessage] = useState("");
   const [SS, setSS] = useState(false);
+  const [showVerdictModal, setShowVerdictModal] = useState(false);
+  const [clientKycId, setClientKycId] = useState(null);
 
   useEffect(() => {
     if (!navigator.onLine) toast.error("Please connect to the internet!");
      // eslint-disable-next-line
   }, [navigator]);
+
+  // Get client KYC ID from socket ID
+  useEffect(() => {
+    const socketId = props.match.params.clientId;
+    if (socketId) {
+      // Fetch client KYC ID from socket
+      fetch(`${baseURL}/getKycIdFromSocket`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ socket: socketId }),
+      })
+        .then((res) => res.json())
+        .then((result) => {
+          if (result.success && result.kycId) {
+            setClientKycId(result.kycId);
+          }
+        })
+        .catch((err) => {
+          console.log("Error fetching KYC ID:", err);
+        });
+    }
+  }, [props.match.params.clientId]);
 
   useEffect(() => {
     setImageFile(dataURLtoFile(imageURL, "vidScreenshot"));
@@ -38,7 +65,8 @@ const VideoPage = (props) => {
     setImageURL(imageDataURL);
     const file = dataURLtoFile(imageDataURL, "userSelfie.png");
     setImageFile(file);
-    setSS(true)
+    setSS(true);
+    toast.success("Screenshot captured successfully!");
   };
 
   const dataURLtoFile = (dataurl, filename) => {
@@ -55,66 +83,59 @@ const VideoPage = (props) => {
     }
   };
 
-  const updateRecord = async (record_type, record_data) => {
-    let data = { record_type, record_data };
-    console.log(data);
-
-    fetch(`${baseURL}/updateRecord`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${localStorage.getItem("clientToken")}`,
-      },
-      body: JSON.stringify(data),
-    })
-      .then((res) => res.json())
-      .then((result, err) => {
-        // setisLoading(false);
-        if (err) {
-          console.log(err);
-          toast.error("Something went wrong");
-          return;
-        }
-        console.log(result)
-      });
-  };
-
-  const handleVerdict = async (verd) => {
-    if (!imageFile) {
-      setMessage("Please take a screenshot first!");
+  const handleVerdict = async (verdict, remarks) => {
+    if (!remarks || !remarks.trim()) {
+      toast.warning("Please enter remarks before submitting verdict");
       return;
     }
     
+    if (!clientKycId) {
+      toast.error("Client information not available");
+      return;
+    }
+
     try {
-      // Upload file to backend with verdict
+      const token = localStorage.getItem("bankToken");
+      if (!token) {
+        toast.error("Please login as bank");
+        history.push("/bank");
+        return;
+      }
+
+      // Upload screenshot (if available) and verdict to backend
       const formDataToSend = new FormData();
-      formDataToSend.append('documentFile', imageFile);
-      formDataToSend.append('record_type', 'video_kyc');
-      formDataToSend.append('record_data', JSON.stringify({ verdict: verd }));
+      if (imageFile) {
+        formDataToSend.append('documentFile', imageFile);
+      }
+      formDataToSend.append('clientKycId', clientKycId);
+      formDataToSend.append('verdict', verdict === "accepted" ? "1" : "2");
+      formDataToSend.append('remarks', remarks);
       
-      const uploadRes = await fetch(`${baseURL}/updateRecord`, {
+      const uploadRes = await fetch(`${baseURL}/bank/submit-vkyc-verdict`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${localStorage.getItem("clientToken")}`,
+          Authorization: `Bearer ${token}`,
         },
         body: formDataToSend,
       });
       
-      if (!uploadRes.ok) {
-        throw new Error("File upload failed");
-      }
-      
       const uploadResult = await uploadRes.json();
       if (uploadResult.success) {
-        setMessage("Updated Successfully!");
+        toast.success(`KYC ${verdict === "accepted" ? "Accepted" : "Rejected"} successfully!`);
+        setShowVerdictModal(false);
+        // Redirect back to bank dashboard
+        setTimeout(() => {
+          history.push("/bank");
+        }, 1500);
       } else {
-        setMessage("Something went wrong!");
+        toast.error(uploadResult.message || "Something went wrong!");
       }
     } catch (error) {
       console.error(error);
-      setMessage("Something went wrong!");
+      toast.error("Something went wrong!");
     }
   };
+
 
 
   return (
@@ -143,8 +164,9 @@ const VideoPage = (props) => {
           imageEle={imageEle}
           imageURL={imageURL}
           handleVerdict={handleVerdict}
-          message={message}
           SS={SS}
+          showVerdictModal={showVerdictModal}
+          setShowVerdictModal={setShowVerdictModal}
         />
       </VideoState>
     </div>

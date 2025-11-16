@@ -21,6 +21,7 @@ import { Card } from "antd";
 const Options = (props) => {
   console.log(props.clientId);
   const [isModalVisible, setIsModalVisible] = useState(false);
+  const [remarks, setRemarks] = useState("");
   const Audio = useRef();
   const {
     call,
@@ -35,6 +36,24 @@ const Options = (props) => {
     myMicStatus,
     updateMic,
   } = useContext(VideoContext);
+
+  // Show verdict modal when call ends
+  useEffect(() => {
+    if (callEnded && props.showVerdictModal !== undefined) {
+      props.setShowVerdictModal(true);
+    }
+  }, [callEnded, props]);
+
+  // Handle hang up - trigger call end
+  const handleHangUp = () => {
+    leaveCall();
+    // Give a moment for callEnded to update, then show verdict modal
+    setTimeout(() => {
+      if (props.imageURL) {
+        props.setShowVerdictModal(true);
+      }
+    }, 500);
+  };
 
   useEffect(() => {
     if (isModalVisible) {
@@ -82,7 +101,7 @@ const Options = (props) => {
           {callAccepted && !callEnded ? (
             <Button
               variant="contained"
-              onClick={leaveCall}
+              onClick={handleHangUp}
               className={classes.hang}
               tabIndex="0"
             >
@@ -168,36 +187,81 @@ const Options = (props) => {
       </div>
       <canvas ref={props.canvasEle} style={{ display: "none" }}></canvas>
                   
-      {props.imageURL && callEnded && 
+      {/* KYC Verdict Modal - Shows after call ends */}
+      {props.showVerdictModal && callEnded && (
       <Modal
-        title="Screenshot"
-        visible={true}
-        onOk={() => showModal(false)}
-        onCancel={handleCancel}
+        title="Video KYC Verification - Make Your Decision"
+        visible={props.showVerdictModal}
+        onCancel={() => {
+          props.setShowVerdictModal(false);
+        }}
         footer={null}
+        width={600}
+        closable={true}
       >
-      <Card
-        style={{ width: 300,margin: "auto" }}
-        cover={
-          <img alt="example" src={props.imageURL}/>
-        }
-        actions={[
+        <div style={{ textAlign: "center", marginBottom: "20px" }}>
+          {props.imageURL ? (
+            <Card
+              style={{ width: "100%", margin: "auto", marginBottom: "20px" }}
+              cover={
+                <img alt="Client with ID" src={props.imageURL} style={{ maxWidth: "100%" }}/>
+              }
+            >
+              <p style={{ marginTop: "10px", fontWeight: "bold" }}>Screenshot Captured</p>
+            </Card>
+          ) : (
+            <p style={{ color: "#ff4d4f", marginBottom: "20px" }}>
+              ⚠️ No screenshot was taken during the call. You can still proceed with the verdict.
+            </p>
+          )}
+        </div>
+        
+        <div style={{ marginBottom: "20px" }}>
+          <label style={{ display: "block", marginBottom: "8px", fontWeight: "bold" }}>
+            Remarks (Required):
+          </label>
+          <Input.TextArea
+            rows={4}
+            placeholder="Enter your remarks about this KYC verification..."
+            value={remarks}
+            onChange={(e) => setRemarks(e.target.value)}
+            maxLength={500}
+            showCount
+          />
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-around", marginTop: "20px" }}>
           <Button
-            variant="contained"
-            onClick={() => props.handleVerdict("accepted")}
+            type="primary"
+            danger
+            size="large"
+            onClick={() => {
+              if (!remarks.trim()) {
+                message.warning("Please enter remarks before rejecting");
+                return;
+              }
+              props.handleVerdict("rejected", remarks);
+            }}
+            disabled={!remarks.trim()}
           >
-            Accept
-          </Button>,
-          <Button
-            variant="contained"
-            onClick={() => props.handleVerdict("rejected")}
-          >
-            Reject
+            Reject KYC
           </Button>
-        ]}
-      >
-      </Card>
-      </Modal>}
+          <Button
+            type="primary"
+            size="large"
+            onClick={() => {
+              if (!remarks.trim()) {
+                message.warning("Please enter remarks before accepting");
+                return;
+              }
+              props.handleVerdict("accepted", remarks);
+            }}
+            disabled={!remarks.trim()}
+          >
+            Accept KYC
+          </Button>
+        </div>
+      </Modal>)}
     </>
   );
 };

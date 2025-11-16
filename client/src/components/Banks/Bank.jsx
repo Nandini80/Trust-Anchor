@@ -303,7 +303,6 @@ const Bank = () => {
   };
 
   const handelStartvKYC = (kyc) => {
-    
       fetch(`${baseURL}/getSocket`, {
         method: "POST",
         headers: {
@@ -322,10 +321,6 @@ const Bank = () => {
           }
           console.log(result);
         });
-  };
-
-  const handleKycVerdict = (verdict) => {
-    setaddRemPop(true);
   };
 
   const handleVerdict = async (verdict) => {
