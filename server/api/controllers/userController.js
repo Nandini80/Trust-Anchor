@@ -1078,3 +1078,23 @@ module.exports.submitVkycVerdict = async (req, res) => {
             image: screenshotPath,
             timestamp: new Date().toISOString(),
           });
+          await updateRecordBC(clientKycId, "video_kyc", recordData);
+        }
+      } catch (err) {
+        console.log("Error updating client record:", err);
+        // Don't fail the request if this fails
+      }
+    }
+
+    res.status(200).json({
+      success: true,
+      message: verdictNum === 1 ? "KYC approved successfully" : "KYC rejected successfully",
+      screenshotPath: screenshotPath,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to submit vKYC verdict",
+    });
+  }
+};

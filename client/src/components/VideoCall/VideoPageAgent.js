@@ -83,30 +83,6 @@ const VideoPage = (props) => {
     }
   };
 
-  const updateRecord = async (record_type, record_data) => {
-    let data = { record_type, record_data };
-    console.log(data);
-
-    fetch(`${baseURL}/updateRecord`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${localStorage.getItem("clientToken")}`,
-      },
-      body: JSON.stringify(data),
-    })
-      .then((res) => res.json())
-      .then((result, err) => {
-        // setisLoading(false);
-        if (err) {
-          console.log(err);
-          toast.error("Something went wrong");
-          return;
-        }
-        console.log(result)
-      });
-  };
-
   const handleVerdict = async (verdict, remarks) => {
     if (!remarks || !remarks.trim()) {
       toast.warning("Please enter remarks before submitting verdict");

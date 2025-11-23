@@ -5,7 +5,7 @@ import {  Modal, Input, notification, Avatar } from "antd";
 import ScreenShotIcon from "../../../assets/screenshot.png";
 import Msg_Illus from "../../../assets/msg_illus.svg";
 import Msg from "../../../assets/msg.svg";
-import { UserOutlined, MessageOutlined, RedoOutlined } from "@ant-design/icons";
+import { UserOutlined, MessageOutlined } from "@ant-design/icons";
 
 import { socket } from "../../../context/VideoState";
 
@@ -15,7 +15,6 @@ const Video = (props) => {
   const {
     callAccepted,
     myVideo,
-    userVideo,
     stream,
     name,
     callEnded,
@@ -24,7 +23,6 @@ const Video = (props) => {
     chat,
     setChat,
     fullScreen,
-    userVdoStatus,
     myVdoStatus,
   } = useContext(VideoContext);
 
@@ -44,10 +42,6 @@ const Video = (props) => {
   useEffect(() => {
     if (dummy?.current) dummy.current.scrollIntoView({ behavior: "smooth" });
   }, [chat]);
-
-  const showModal = (showVal) => {
-    setIsModalVisible(showVal);
-  };
 
   const onSearch = (value) => {
     if (value && value.length) sendMsgFunc(value);
