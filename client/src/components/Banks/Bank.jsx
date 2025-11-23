@@ -47,6 +47,26 @@ const Bank = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
+  // Update footer buttons when loading state or clientData changes
+  useEffect(() => {
+    if (clientData && isPopupOpen) {
+      setUserDataFooters([
+        <Button
+          key="start-vkyc"
+          type="primary"
+          loading={isLoading}
+          onClick={() => handelStartvKYC(clientData.kycId)}
+        >
+          Start vKYC
+        </Button>,
+        <Button key="close" onClick={() => setIsPopupOpen(false)}>
+          Close
+        </Button>,
+      ]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, clientData, isPopupOpen]);
+
   const setup = async () => {
     try {
       let [tempDmr, tempAcc] = await InitialiseWeb3();
@@ -291,26 +311,39 @@ const Bank = () => {
     });
   };
 
-  const handelStartvKYC = (kyc) => {
+  const handelStartvKYC = async (kyc) => {
+    if (!kyc) {
+      message.error("KYC ID is missing");
+      return;
+    }
     
-      fetch(`${baseURL}/getSocket`, {
+    setisLoading(true);
+    try {
+      const response = await fetch(`${baseURL}/getSocket`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ kycId: kyc }),
-      })
-        .then((res) => res.json())
-        .then((result, err) => {
-          if (err) {
-            console.log(err);
-            return;
-          }
-          if (result.success) {
-            history.push(`agent/video/${result.socket}`);
-          }
-          console.log(result);
-        });
+      });
+      
+      const result = await response.json();
+      
+      if (result.success && result.socket) {
+        // Close the modal before navigating
+        setIsPopupOpen(false);
+        message.success("Starting vKYC session...");
+        history.push(`/agent/video/${result.socket}`);
+      } else {
+        message.error(result.message || "Failed to start vKYC session");
+        console.error("vKYC start failed:", result);
+      }
+    } catch (error) {
+      console.error("Error starting vKYC:", error);
+      message.error("Failed to start vKYC session. Please try again.");
+    } finally {
+      setisLoading(false);
+    }
   };
 
   const handleKycVerdict = (verdict) => {

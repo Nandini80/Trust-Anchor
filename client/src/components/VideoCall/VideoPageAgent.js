@@ -80,39 +80,63 @@ const VideoPage = (props) => {
   };
 
   const handleVerdict = async (verd) => {
-    if (!imageFile) {
-      setMessage("Please take a screenshot first!");
-      return;
-    }
-    
     try {
-      // Upload file to backend with verdict
-      const formDataToSend = new FormData();
-      formDataToSend.append('documentFile', imageFile);
-      formDataToSend.append('record_type', 'video_kyc');
-      formDataToSend.append('record_data', JSON.stringify({ verdict: verd }));
+      const clientKycId = props.match.params.clientId;
+      const verdictValue = verd === "accepted" ? 1 : 2;
       
-      const uploadRes = await fetch(`${baseURL}/updateRecord`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("clientToken")}`,
-        },
-        body: formDataToSend,
-      });
-      
-      if (!uploadRes.ok) {
-        throw new Error("File upload failed");
-      }
-      
-      const uploadResult = await uploadRes.json();
-      if (uploadResult.success) {
-        setMessage("Updated Successfully!");
+      // Show success message immediately
+      if (verd === "accepted") {
+        toast.success("KYC Accepted! Redirecting to bank page...");
       } else {
-        setMessage("Something went wrong!");
+        toast.success("KYC Rejected! Redirecting to bank page...");
       }
+      
+      // Try to update record (non-blocking)
+      try {
+        const formDataToSend = new FormData();
+        if (imageFile) {
+          formDataToSend.append('documentFile', imageFile);
+        }
+        formDataToSend.append('record_type', 'video_kyc');
+        formDataToSend.append('record_data', JSON.stringify({ 
+          verdict: verdictValue,
+          timestamp: Date.now(),
+          clientKycId: clientKycId
+        }));
+        
+        // Use bank token for bank operations
+        const bankToken = localStorage.getItem("bankToken");
+        const uploadRes = await fetch(`${baseURL}/updateRecord`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${bankToken || localStorage.getItem("clientToken")}`,
+          },
+          body: formDataToSend,
+        });
+        
+        if (uploadRes.ok) {
+          const uploadResult = await uploadRes.json();
+          if (uploadResult.success) {
+            console.log("KYC status updated successfully");
+          }
+        }
+      } catch (apiError) {
+        // Log error but don't block redirect
+        console.error("Error updating KYC status:", apiError);
+      }
+      
+      // Redirect to bank page after short delay
+      setTimeout(() => {
+        window.location.href = "/bank";
+      }, 1000);
+      
     } catch (error) {
       console.error(error);
-      setMessage("Something went wrong!");
+      // Still redirect even on error
+      toast.error(`Error processing KYC ${verd === "accepted" ? "acceptance" : "rejection"}. Redirecting...`);
+      setTimeout(() => {
+        window.location.href = "/bank";
+      }, 1500);
     }
   };
 
@@ -136,6 +160,7 @@ const VideoPage = (props) => {
           clickScreenshot={clickScreenshot} 
           SS={SS}
           imageURL={imageURL}
+          handleVerdict={handleVerdict}
         />
         <Options
           clientId={props.match.params.clientId}

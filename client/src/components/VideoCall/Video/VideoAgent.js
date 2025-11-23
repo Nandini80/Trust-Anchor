@@ -14,7 +14,9 @@ const { Search } = Input;
 const Video = (props) => {
   const {
     callAccepted,
+    myVideo,
     userVideo,
+    stream,
     name,
     callEnded,
     sendMsg: sendMsgFunc,
@@ -23,6 +25,7 @@ const Video = (props) => {
     setChat,
     fullScreen,
     userVdoStatus,
+    myVdoStatus,
   } = useContext(VideoContext);
 
   const [sendMsg, setSendMsg] = useState("");
@@ -65,25 +68,26 @@ const Video = (props) => {
   return (
     <>
       <div className="grid">
-        {callAccepted && !callEnded?  (
+        {/* Bank's own video - shown as "Client Video" */}
+        {stream ? (
           <div
             style={{ textAlign: "center" }}
             className="card"
-            id={callAccepted && !callEnded ? "video1" : "video3"}
+            id="video1"
           >
             <div style={{ height: "2rem" }}>
-              <h3>{userVdoStatus && name?name:"Client Name"}</h3>
+              <h3>Client Video</h3>
             </div>
             <div className="video-avatar-container">
               <video
                 playsInline
                 muted
                 onClick={fullScreen}
-                ref={userVideo}
+                ref={myVideo}
                 autoPlay
                 className="video-active"
                 style={{
-                  opacity: `${userVdoStatus ? "1" : "0"}`,
+                  opacity: `${myVdoStatus ? "1" : "0"}`,
                 }}
               />
 
@@ -91,17 +95,16 @@ const Video = (props) => {
                 style={{
                   backgroundColor: "#116",
                   position: "absolute",
-                  opacity: `${userVdoStatus ? "-1" : "2"}`,
+                  opacity: `${myVdoStatus ? "-1" : "2"}`,
                 }}
                 size={98}
-                icon={!name && <UserOutlined />}
+                icon={<UserOutlined />}
               >
-                {name}
+                {name || "Client"}
               </Avatar>
             </div>
 
             <div className="iconsDiv">
-
               {callAccepted && !callEnded && (
                 <div
                   className="icons"
@@ -113,49 +116,83 @@ const Video = (props) => {
                   <img src={Msg} alt="chat icon" />
                 </div>
               )}
-              <Modal
-                title="Chat"
-                footer={null}
-                visible={isModalVisible}
-                onOk={() => showModal(false)}
-                onCancel={() => showModal(false)}
-                style={{ maxHeight: "100px" }}
-              >
-                {chat.length ? (
-                  <div className="msg_flex">
-                    {chat.map((msg) => (
-                      <div className={msg.type === "sent" ? "msg_sent" : "msg_rcv"}>
-                        {msg.msg}
-                      </div>
-                    ))}
-                    <div ref={dummy} id="no_border"></div>
-                  </div>
-                ) : (
-                  <div className="chat_img_div">
-                    <img src={Msg_Illus} alt="msg_illus" className="img_illus" />
-                  </div>
-                )}
-                <Search
-                  placeholder="your message"
-                  allowClear
-                  className="input_msg"
-                  enterButton="Send 🚀"
-                  onChange={(e) => setSendMsg(e.target.value)}
-                  value={sendMsg}
-                  size="large"
-                  onSearch={onSearch}
-                />
-              </Modal>
 
               {callAccepted && !callEnded && (
                 <div
                   className="icons"
-                  onClick={() => props.clickScreenshot(userVideo)}
+                  onClick={() => props.clickScreenshot(myVideo)}
                   tabIndex="0"
                 >
-                  <img src={ScreenShotIcon}  alt="screenshot icon" />
+                  <img src={ScreenShotIcon} alt="screenshot icon" />
                 </div>
               )}
+            </div>
+
+            {/* Accept/Reject KYC Buttons at Bottom */}
+            <div style={{ 
+              marginTop: "20px", 
+              padding: "20px",
+              display: "flex", 
+              justifyContent: "center", 
+              gap: "20px",
+              borderTop: "2px solid #e8e8e8",
+              backgroundColor: "#fafafa"
+            }}>
+              <button
+                onClick={() => {
+                  if (props.handleVerdict) {
+                    props.handleVerdict("accepted");
+                  }
+                }}
+                style={{
+                  padding: "12px 30px",
+                  backgroundColor: "#52c41a",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  fontSize: "16px",
+                  fontWeight: "bold",
+                }}
+                onMouseOver={(e) => {
+                  e.target.style.backgroundColor = "#73d13d";
+                  e.target.style.transform = "scale(1.05)";
+                }}
+                onMouseOut={(e) => {
+                  e.target.style.backgroundColor = "#52c41a";
+                  e.target.style.transform = "scale(1)";
+                }}
+              >
+                Accept KYC
+              </button>
+
+              <button
+                onClick={() => {
+                  if (props.handleVerdict) {
+                    props.handleVerdict("rejected");
+                  }
+                }}
+                style={{
+                  padding: "12px 30px",
+                  backgroundColor: "#ff4d4f",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "6px",
+                  cursor: "pointer",
+                  fontSize: "16px",
+                  fontWeight: "bold",
+                }}
+                onMouseOver={(e) => {
+                  e.target.style.backgroundColor = "#ff7875";
+                  e.target.style.transform = "scale(1.05)";
+                }}
+                onMouseOut={(e) => {
+                  e.target.style.backgroundColor = "#ff4d4f";
+                  e.target.style.transform = "scale(1)";
+                }}
+              >
+                Reject KYC
+              </button>
             </div>
           </div>
         ) : (
@@ -166,23 +203,40 @@ const Video = (props) => {
           </div>
         )}
 
-      {props.SS && (
-          <div style={{ textAlign: "center" }}className="card"id={callAccepted && !callEnded ? "video1" : "video3"}>
-          <div style={{ height: "2rem" }}>
-            <h3>{userVdoStatus && name?name:"Screenshot"}</h3>
-          </div>
-            <img alt="example" style={{ maxWidth:'100%'}} src={props.imageURL}/>
-
-            <div className="iconsDiv">
-              {callAccepted && !callEnded && (
-                <div className="icons" onClick={() => {props.clickScreenshot(userVideo)}}tabIndex="0">
-                  <RedoOutlined />
-                  {/* <img src={Msg} alt="chat icon" /> */}
+        {/* Chat Modal */}
+        <Modal
+          title="Chat"
+          footer={null}
+          visible={isModalVisible}
+          onOk={() => setIsModalVisible(false)}
+          onCancel={() => setIsModalVisible(false)}
+          style={{ maxHeight: "100px" }}
+        >
+          {chat.length ? (
+            <div className="msg_flex">
+              {chat.map((msg, idx) => (
+                <div key={idx} className={msg.type === "sent" ? "msg_sent" : "msg_rcv"}>
+                  {msg.msg}
                 </div>
-              )}
-              </div>
-          </div>
-        )}  
+              ))}
+              <div ref={dummy} id="no_border"></div>
+            </div>
+          ) : (
+            <div className="chat_img_div">
+              <img src={Msg_Illus} alt="msg_illus" className="img_illus" />
+            </div>
+          )}
+          <Search
+            placeholder="your message"
+            allowClear
+            className="input_msg"
+            enterButton="Send 🚀"
+            onChange={(e) => setSendMsg(e.target.value)}
+            value={sendMsg}
+            size="large"
+            onSearch={onSearch}
+          />
+        </Modal>
       </div>
     </>
   );
