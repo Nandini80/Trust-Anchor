@@ -27,6 +27,7 @@ function App() {
         <Route exact path="/client/UpdateRecord" component={UpdateRecord} />
         <Route exact path="/client/NewClient" component={NewClient} />
         <Route exact path="/client/video" component={VideoPageClient} />
+        <Route exact path="/client/video/:socketId" component={VideoPageClient} />
         <Route exact path="/agent/video/:clientId" component={VideoPageAgent} />
       </Switch>
     </Router>

@@ -162,6 +162,15 @@ const Bank = () => {
       >
         Start vKYC
       </Button>,
+      <Button
+        type="primary"
+        onClick={() => {
+          setremarks("");
+          setaddRemPop(true);
+        }}
+      >
+        Proceed without vKYC
+      </Button>,
       <Button key="close" onClick={() => setIsPopupOpen(false)}>
         Close
       </Button>,
@@ -170,12 +179,14 @@ const Bank = () => {
 
   const fetchClientDataDetails = async (kycId) => {
     try {
+      const hide = message.loading("Loading client details...", 0);
       const response = await fetch(`${baseURL}/bank/access`, {
         method: "POST",
         headers: authHeaders,
         body: JSON.stringify({ clientKycId: kycId }),
       });
       const result = await response.json();
+      hide();
       if (result.success) {
         showClientDataPopup(result.data);
         fetchBankRequests();
@@ -346,28 +357,19 @@ const Bank = () => {
     }
   };
 
-  const handleKycVerdict = (verdict) => {
-    setaddRemPop(true);
-  };
-
-  const handleVerdict = (verdict) => {
+  const handleVerdict = async (verdict) => {
     console.log(remarks);
-    if (!usingBlockchain || !dmr || !accounts) {
-      if (!clientData) {
-        message.warning("No client data available");
-        return;
-      }
-      if (!remarks.length) {
-        message.warning("Please add remarks");
-        return;
-      }
-      message.success("Remarks recorded (simulation)");
-      handelAddRemarksPopup();
-      setIsPopupOpen(false);
-      setremarks("");
+    if (!clientData) {
+      message.warning("No client data available");
       return;
     }
-    if (dmr && accounts && clientData && remarks.length > 0) {
+    if (!remarks.length) {
+      message.warning("Please add remarks");
+      return;
+    }
+
+    // Use blockchain if available
+    if (usingBlockchain && dmr && accounts) {
       dmr.methods
         .updateKycStatus(
           clientData.kycId,
@@ -377,15 +379,60 @@ const Bank = () => {
           verdict
         )
         .send({ from: accounts[0] })
-        .then((res) => {
+        .then(async (res) => {
+          message.success(verdict === 1 ? "KYC approved successfully" : "KYC rejected successfully");
           getBankData();
           handelAddRemarksPopup();
-          setIsPopupOpen((prev) => {return !prev;});
           setremarks("");
+          // Refetch client data to show updated history (this will reopen popup with updated data)
+          if (clientData && clientData.kycId) {
+            const currentKycId = clientData.kycId;
+            setIsPopupOpen(false); // Close current popup first
+            await fetchClientDataDetails(currentKycId); // This will reopen with updated data
+          } else {
+            setIsPopupOpen((prev) => {return !prev;});
+          }
+          fetchBankRequests();
         })
         .catch((err) => {
           console.log(err);
+          message.error("Failed to update KYC status");
         });
+      return;
+    }
+
+    // Use API endpoint when blockchain is not available
+    try {
+      const response = await fetch(`${baseURL}/bank/update-kyc-status`, {
+        method: "POST",
+        headers: authHeaders,
+        body: JSON.stringify({
+          clientKycId: clientData.kycId,
+          remarks: remarks,
+          verdict: verdict,
+        }),
+      });
+
+      const result = await response.json();
+      if (result.success) {
+        message.success(result.message || (verdict === 1 ? "KYC approved successfully" : "KYC rejected successfully"));
+        handelAddRemarksPopup();
+        setremarks("");
+        // Refetch client data to show updated history (this will reopen popup with updated data)
+        if (clientData && clientData.kycId) {
+          const currentKycId = clientData.kycId;
+          setIsPopupOpen(false); // Close current popup first
+          await fetchClientDataDetails(currentKycId); // This will reopen with updated data
+        } else {
+          setIsPopupOpen(false);
+        }
+        fetchBankRequests();
+      } else {
+        message.error(result.message || "Failed to update KYC status");
+      }
+    } catch (error) {
+      console.log(error);
+      message.error("Failed to update KYC status");
     }
   };
 
@@ -569,14 +616,30 @@ const Bank = () => {
             ? approvedClients.map((req, i) => {
                 return (
                   <Card.Grid
+                    key={i}
                     style={{
                       width: "25%",
                       textAlign: "center",
                       margin: "15px",
                       fontSize: "15px",
                       borderRadius: "9px",
+                      cursor: "pointer",
+                      transition: "all 0.3s ease",
                     }}
-                    onClick={() => fetchClientDataDetails(req.clientKycId)}
+                    onClick={() => {
+                      setisLoading(true);
+                      fetchClientDataDetails(req.clientKycId).finally(() => {
+                        setisLoading(false);
+                      });
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = "scale(1.05)";
+                      e.currentTarget.style.boxShadow = "0 4px 8px rgba(0,0,0,0.2)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = "scale(1)";
+                      e.currentTarget.style.boxShadow = "none";
+                    }}
                   >
                     <div style={{ fontWeight: 600 }}>
                       {req.clientName || req.clientKycId}

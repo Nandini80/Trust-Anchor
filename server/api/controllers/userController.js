@@ -786,6 +786,26 @@ module.exports.accessClientData = async (req, res) => {
       });
     }
 
+    // Build KYC history from BankRequest history
+    // Format should match blockchain: [bankName, remarks, verdict, timestamp]
+    const kycHistory = [];
+    if (bankRequest.history && bankRequest.history.length > 0) {
+      // Extract KYC history entries - remarks are stored in message field
+      bankRequest.history.forEach((entry) => {
+        if (entry.action === "kyc_approved" || entry.action === "kyc_rejected") {
+          const verdict = entry.action === "kyc_approved" ? "1" : "2";
+          const timestamp = entry.at ? new Date(entry.at).getTime() : Date.now();
+          // Use remarks from message field (stored when status was updated)
+          kycHistory.push([
+            bankRequest.bankName || req.user.bankName || req.user.email,
+            entry.message || bankRequest.remarks || "",
+            verdict,
+            timestamp.toString(),
+          ]);
+        }
+      });
+    }
+
     const clientData = {
       email: client.email,
       kycId: client.kycId,
@@ -800,8 +820,8 @@ module.exports.accessClientData = async (req, res) => {
         ["Aadhar Card", client.aadharFile || ""],
         ["Selfie", client.selfieFile || ""],
       ],
-      kycHistory: [],
-      kycStatus: "1",
+      kycHistory: kycHistory,
+      kycStatus: bankRequest.remarks ? (kycHistory.length > 0 && kycHistory[kycHistory.length - 1][2] === "1" ? "1" : "2") : "1",
     };
 
     bankRequest.history.push({
@@ -818,6 +838,66 @@ module.exports.accessClientData = async (req, res) => {
     res.status(500).json({
       success: false,
       message: error.message || "Failed to access client data",
+    });
+  }
+};
+
+module.exports.updateKycStatus = async (req, res) => {
+  try {
+    if (!req.user || req.user.userType !== "bank") {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized access",
+      });
+    }
+
+    const { clientKycId, remarks, verdict } = req.body;
+
+    if (!clientKycId || !remarks || verdict === undefined) {
+      return res.status(400).json({
+        success: false,
+        message: "Client KYC ID, remarks, and verdict are required",
+      });
+    }
+
+    // Validate verdict: 1 = Accept, 2 = Reject
+    if (verdict !== 1 && verdict !== 2) {
+      return res.status(400).json({
+        success: false,
+        message: "Verdict must be 1 (Accept) or 2 (Reject)",
+      });
+    }
+
+    // Check if bank has access to this client
+    const bankRequest = await BankRequest.findOne({
+      bankEmail: req.user.email,
+      clientKycId,
+      status: "approved",
+    });
+
+    if (!bankRequest) {
+      return res.status(403).json({
+        success: false,
+        message: "No approved access found for this client",
+      });
+    }
+
+    // Update BankRequest with remarks
+    bankRequest.remarks = remarks;
+    bankRequest.history.push({
+      action: verdict === 1 ? "kyc_approved" : "kyc_rejected",
+      message: remarks, // Store remarks in message field
+    });
+    await bankRequest.save();
+
+    res.status(200).json({
+      success: true,
+      message: verdict === 1 ? "KYC approved successfully" : "KYC rejected successfully",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update KYC status",
     });
   }
 };
@@ -897,3 +977,104 @@ module.exports.getSocket = async (req, res) => {
     });
   }
 };
+
+module.exports.getKycIdFromSocket = async (req, res) => {
+  try {
+    const { socket } = req.body;
+    if (!socket) {
+      return res.status(400).json({
+        success: false,
+        message: "Socket ID is required",
+      });
+    }
+
+    const user = await User.findOne({ socket });
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "No user found with this socket ID",
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      kycId: user.kycId,
+      message: "KYC ID fetched successfully",
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: error.message || "Something went wrong",
+    });
+  }
+};
+
+module.exports.submitVkycVerdict = async (req, res) => {
+  try {
+    if (!req.user || req.user.userType !== "bank") {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized access",
+      });
+    }
+
+    const { clientKycId, verdict, remarks } = req.body;
+
+    if (!clientKycId || !remarks || !verdict) {
+      return res.status(400).json({
+        success: false,
+        message: "Client KYC ID, remarks, and verdict are required",
+      });
+    }
+
+    // Validate verdict: "1" or "2" (Accept or Reject)
+    const verdictNum = parseInt(verdict);
+    if (verdictNum !== 1 && verdictNum !== 2) {
+      return res.status(400).json({
+        success: false,
+        message: "Verdict must be 1 (Accept) or 2 (Reject)",
+      });
+    }
+
+    // Check if bank has access to this client
+    const bankRequest = await BankRequest.findOne({
+      bankEmail: req.user.email,
+      clientKycId,
+      status: "approved",
+    });
+
+    if (!bankRequest) {
+      return res.status(403).json({
+        success: false,
+        message: "No approved access found for this client",
+      });
+    }
+
+    // Handle screenshot file if provided
+    let screenshotPath = null;
+    if (req.files && req.files.documentFile) {
+      screenshotPath = `/documents/${req.files.documentFile[0].filename}`;
+    }
+
+    // Update BankRequest with remarks and verdict
+    bankRequest.remarks = remarks;
+    bankRequest.history.push({
+      action: verdictNum === 1 ? "vkyc_approved" : "vkyc_rejected",
+      message: remarks,
+      screenshot: screenshotPath,
+      timestamp: new Date(),
+    });
+    await bankRequest.save();
+
+    // Also update client's record if screenshot was provided
+    if (screenshotPath && clientKycId) {
+      try {
+        const client = await User.findOne({ kycId: clientKycId });
+        if (client) {
+          // Add video KYC record
+          const recordData = JSON.stringify({
+            verdict: verdictNum === 1 ? "accepted" : "rejected",
+            remarks: remarks,
+            image: screenshotPath,
+            timestamp: new Date().toISOString(),
+          });

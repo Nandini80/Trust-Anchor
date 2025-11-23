@@ -16,6 +16,9 @@ const {
   getBankRequests,
   createBankRequest,
   accessClientData,
+  updateKycStatus,
+  getKycIdFromSocket,
+  submitVkycVerdict,
 } = require("./controllers/userController");
 
 router.get("/", home);
@@ -68,10 +71,15 @@ router.post("/uploadDocuments", upload.fields([
 });
 router.post("/updateSocket", passport.authenticate("jwt", { session: false }), updateSocket);
 router.post("/getSocket", getSocket);
+router.post("/getKycIdFromSocket", getKycIdFromSocket);
 router.get("/bank/profile", passport.authenticate("jwt", { session: false }), getBankProfile);
 router.get("/bank/requests", passport.authenticate("jwt", { session: false }), getBankRequests);
 router.post("/bank/request", passport.authenticate("jwt", { session: false }), createBankRequest);
 router.post("/bank/access", passport.authenticate("jwt", { session: false }), accessClientData);
+router.post("/bank/update-kyc-status", passport.authenticate("jwt", { session: false }), updateKycStatus);
+router.post("/bank/submit-vkyc-verdict", passport.authenticate("jwt", { session: false }), upload.fields([
+  { name: 'documentFile', maxCount: 1 }
+]), submitVkycVerdict);
 
 
 router.get("*", notFound);
