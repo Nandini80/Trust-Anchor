@@ -35,12 +35,18 @@ const VideoState = ({ children }) => {
         setStream(currentStream);
         if(myVideo.current){
           myVideo.current.srcObject = currentStream;
+          myVideo.current.play().catch(err => {
+            console.error("Error playing video in VideoState:", err);
+          });
         }
+      })
+      .catch((err) => {
+        console.error("Error accessing camera/microphone:", err);
       });
     socket.on("me", (id) => setMe(id));
 
     socket.on("updateUserMedia", ({ type, currentMediaStatus }) => {
-      if (currentMediaStatus !== null || currentMediaStatus !== []) {
+      if (currentMediaStatus !== null && currentMediaStatus !== undefined) {
         switch (type) {
           case "video":
             setUserVdoStatus(currentMediaStatus);
@@ -66,7 +72,66 @@ const VideoState = ({ children }) => {
         setMsgRcv({});
       }, 2000);
     });
+
+    // Listen for callAccepted event (when client accepts agent's call)
+    socket.on("callAccepted", ({ signal, userName }) => {
+      console.log("=== callAccepted event received ===");
+      console.log("  - Signal:", signal);
+      console.log("  - UserName:", userName);
+      console.log("  - Setting callAccepted to TRUE");
+      setCallAccepted(true);
+      if (userName) {
+        setUserName(userName);
+      }
+      // Signal the peer connection if it exists
+      if (connectionRef.current) {
+        console.log("  - Signaling peer connection");
+        connectionRef.current.signal(signal);
+      } else {
+        console.warn("  - WARNING: connectionRef.current is null!");
+      }
+      // Emit media status update - will use current state values
+      // Note: myMicStatus and myVdoStatus are from closure, but that's fine for initial status
+      socket.emit("updateMyMedia", {
+        type: "both",
+        currentMediaStatus: [myMicStatus, myVdoStatus],
+      });
+      console.log("  - callAccepted processing complete");
+    });
+
+    // Listen for endCall event (when other party ends the call)
+    socket.on("endCall", () => {
+      console.log("endCall event received, setting callEnded to true");
+      setCallEnded(true);
+      if (connectionRef.current) {
+        connectionRef.current.destroy();
+        connectionRef.current = null;
+      }
+    });
+
+    // Cleanup function to remove listeners
+    return () => {
+      socket.off("me");
+      socket.off("updateUserMedia");
+      socket.off("callUser");
+      socket.off("msgRcv");
+      socket.off("callAccepted");
+      socket.off("endCall");
+    };
   }, []);
+
+  // Ensure stream is assigned to myVideo whenever both are available
+  useEffect(() => {
+    if (stream && myVideo.current) {
+      // Assign stream if not already set
+      if (!myVideo.current.srcObject) {
+        myVideo.current.srcObject = stream;
+        myVideo.current.play().catch(err => {
+          console.error("Error playing video in VideoState useEffect:", err);
+        });
+      }
+    }
+  }, [stream]);
 
 
   const answerCall = () => {
@@ -97,8 +162,15 @@ const VideoState = ({ children }) => {
   };
 
   const callUser = (id) => {
+    // Reset call states when initiating a new call
+    setCallEnded(false);
+    
+    // Set callAccepted to true immediately when call button is clicked
+    setCallAccepted(true);
+    
     const peer = new Peer({ initiator: true, trickle: false, stream });
     setOtherUser(id);
+    
     peer.on("signal", (data) => {
       socket.emit("callUser", {
         userToCall: id,
@@ -109,21 +181,13 @@ const VideoState = ({ children }) => {
     });
 
     peer.on("stream", (currentStream) => {
-      userVideo.current.srcObject = currentStream;
-    });
-
-    socket.on("callAccepted", ({ signal, userName }) => {
-      setCallAccepted(true);
-      setUserName(userName);
-      peer.signal(signal);
-      socket.emit("updateMyMedia", {
-        type: "both",
-        currentMediaStatus: [myMicStatus, myVdoStatus],
-      });
+      console.log("Agent received stream from client");
+      if (userVideo.current) {
+        userVideo.current.srcObject = currentStream;
+      }
     });
 
     connectionRef.current = peer;
-    console.log(connectionRef.current);
   };
 
   const updateVideo = () => {

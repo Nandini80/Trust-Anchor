@@ -1,12 +1,42 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useContext } from "react";
 import Video from "./Video/VideoAgent";
-import VideoState from "../../context/VideoState";
+import VideoState, { socket } from "../../context/VideoState";
+import VideoContext from "../../context/VideoContext";
 import { baseURL } from "../../api";
 import Options from "./options/OptionsAgent";
 import { ToastContainer, toast } from "react-toastify";
 import { useHistory } from "react-router-dom";
 import "./VideoPage.css";
 // IPFS removed - files are now saved locally in the documents folder
+
+// Component to auto-call the client when agent page loads
+const AutoCallClient = ({ clientId, bankName }) => {
+  const { callUser, me, callAccepted, callEnded, setName } = useContext(VideoContext);
+  const [hasCalled, setHasCalled] = useState(false);
+
+  useEffect(() => {
+    // Set bank name for the call
+    if (bankName && setName) {
+      setName(bankName);
+      localStorage.setItem("name", bankName);
+    }
+  }, [bankName, setName]);
+
+  useEffect(() => {
+    // Wait for socket connection and clientId, then auto-call
+    if (clientId && me && !hasCalled && !callAccepted && !callEnded) {
+      // Small delay to ensure everything is initialized
+      const timer = setTimeout(() => {
+        console.log("Auto-calling client:", clientId, "as", bankName);
+        callUser(clientId);
+        setHasCalled(true);
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [clientId, me, callUser, hasCalled, callAccepted, callEnded, bankName]);
+
+  return null;
+};
 
 const VideoPage = (props) => {
   const history = useHistory();
@@ -17,11 +47,45 @@ const VideoPage = (props) => {
   const [SS, setSS] = useState(false);
   const [showVerdictModal, setShowVerdictModal] = useState(false);
   const [clientKycId, setClientKycId] = useState(null);
+  const [bankName, setBankName] = useState("Bank");
 
   useEffect(() => {
     if (!navigator.onLine) toast.error("Please connect to the internet!");
      // eslint-disable-next-line
   }, [navigator]);
+
+  // Get bank name from localStorage or API
+  useEffect(() => {
+    const token = localStorage.getItem("bankToken");
+    if (token) {
+      // Try to get from localStorage first
+      const bankInfo = localStorage.getItem("bankInfo");
+      if (bankInfo) {
+        try {
+          const parsed = JSON.parse(bankInfo);
+          setBankName(parsed.bankName || parsed.email || "Bank");
+        } catch (e) {
+          console.error("Error parsing bank info:", e);
+        }
+      }
+      
+      // Also fetch from API to ensure we have the latest
+      fetch(`${baseURL}/bank/profile`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      })
+        .then((res) => res.json())
+        .then((result) => {
+          if (result.success && result.data.bankName) {
+            setBankName(result.data.bankName);
+          }
+        })
+        .catch((err) => {
+          console.log("Error fetching bank profile:", err);
+        });
+    }
+  }, []);
 
   // Get client KYC ID from socket ID
   useEffect(() => {
@@ -53,20 +117,44 @@ const VideoPage = (props) => {
 
 
   const clickScreenshot = async (userVideo) => {
-    const width = userVideo.current.videoWidth;
-    const height = userVideo.current.videoHeight;
-    const ctx = canvasEle.current.getContext("2d");
-    canvasEle.current.width = width;
-    canvasEle.current.height = height;
+    try {
+      if (!userVideo || !userVideo.current) {
+        toast.error("Video element not available");
+        return;
+      }
 
-    ctx.drawImage(userVideo.current, 0, 0, width, height);
+      const video = userVideo.current;
+      
+      // Check if video is ready and has valid dimensions
+      if (!video.videoWidth || !video.videoHeight || video.videoWidth === 0 || video.videoHeight === 0) {
+        toast.warning("Video stream is not ready. Please wait a moment and try again.");
+        return;
+      }
 
-    let imageDataURL = canvasEle.current.toDataURL("image/png");
-    setImageURL(imageDataURL);
-    const file = dataURLtoFile(imageDataURL, "userSelfie.png");
-    setImageFile(file);
-    setSS(true);
-    toast.success("Screenshot captured successfully!");
+      const width = video.videoWidth;
+      const height = video.videoHeight;
+      
+      if (!canvasEle.current) {
+        toast.error("Canvas element not available");
+        return;
+      }
+
+      const ctx = canvasEle.current.getContext("2d");
+      canvasEle.current.width = width;
+      canvasEle.current.height = height;
+
+      ctx.drawImage(video, 0, 0, width, height);
+
+      let imageDataURL = canvasEle.current.toDataURL("image/png");
+      setImageURL(imageDataURL);
+      const file = dataURLtoFile(imageDataURL, "userSelfie.png");
+      setImageFile(file);
+      setSS(true);
+      toast.success("Screenshot captured successfully!");
+    } catch (error) {
+      console.error("Error capturing screenshot:", error);
+      toast.error("Failed to capture screenshot. Please try again.");
+    }
   };
 
   const dataURLtoFile = (dataurl, filename) => {
@@ -83,11 +171,8 @@ const VideoPage = (props) => {
     }
   };
 
-  const handleVerdict = async (verdict, remarks) => {
-    if (!remarks || !remarks.trim()) {
-      toast.warning("Please enter remarks before submitting verdict");
-      return;
-    }
+  const handleVerdict = async (verdict, remarks = "") => {
+    const finalRemarks = remarks.trim() || `KYC ${verdict === "accepted" ? "Accepted" : "Rejected"} via vKYC`;
     
     if (!clientKycId) {
       toast.error("Client information not available");
@@ -109,7 +194,7 @@ const VideoPage = (props) => {
       }
       formDataToSend.append('clientKycId', clientKycId);
       formDataToSend.append('verdict', verdict === "accepted" ? "1" : "2");
-      formDataToSend.append('remarks', remarks);
+      formDataToSend.append('remarks', finalRemarks);
       
       const uploadRes = await fetch(`${baseURL}/bank/submit-vkyc-verdict`, {
         method: "POST",
@@ -123,10 +208,12 @@ const VideoPage = (props) => {
       if (uploadResult.success) {
         toast.success(`KYC ${verdict === "accepted" ? "Accepted" : "Rejected"} successfully!`);
         setShowVerdictModal(false);
-        // Redirect back to bank dashboard
-        setTimeout(() => {
+        // Redirect to bank dashboard with client KYC ID to show details
+        if (clientKycId) {
+          history.push(`/bank?kycId=${clientKycId}`);
+        } else {
           history.push("/bank");
-        }, 1500);
+        }
       } else {
         toast.error(uploadResult.message || "Something went wrong!");
       }
@@ -153,6 +240,10 @@ const VideoPage = (props) => {
         pauseOnHover
       />
       <VideoState>
+        <AutoCallClient 
+          clientId={props.match.params.clientId} 
+          bankName={bankName}
+        />
         <Video 
           clickScreenshot={clickScreenshot} 
           SS={SS}

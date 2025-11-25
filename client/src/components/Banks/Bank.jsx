@@ -44,6 +44,18 @@ const Bank = () => {
     }
     fetchBankProfile();
     fetchBankRequests();
+    
+    // Check if there's a kycId in URL params (from vKYC redirect)
+    const urlParams = new URLSearchParams(window.location.search);
+    const kycId = urlParams.get('kycId');
+    if (kycId) {
+      // Remove from URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+      // Fetch and show client data
+      setTimeout(() => {
+        fetchClientDataDetails(kycId);
+      }, 500);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
@@ -346,7 +358,13 @@ const Bank = () => {
         message.success("Starting vKYC session...");
         history.push(`/agent/video/${result.socket}`);
       } else {
-        message.error(result.message || "Failed to start vKYC session");
+        // More helpful error message
+        const errorMsg = result.message || "Failed to start vKYC session";
+        if (errorMsg.includes("No user found")) {
+          message.warning("Client is not connected. Please ask the client to visit the video page (/client/video) and wait for the connection to be established.", 8);
+        } else {
+          message.error(errorMsg);
+        }
         console.error("vKYC start failed:", result);
       }
     } catch (error) {

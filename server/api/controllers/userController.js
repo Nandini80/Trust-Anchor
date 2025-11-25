@@ -792,9 +792,14 @@ module.exports.accessClientData = async (req, res) => {
     if (bankRequest.history && bankRequest.history.length > 0) {
       // Extract KYC history entries - remarks are stored in message field
       bankRequest.history.forEach((entry) => {
-        if (entry.action === "kyc_approved" || entry.action === "kyc_rejected") {
-          const verdict = entry.action === "kyc_approved" ? "1" : "2";
-          const timestamp = entry.at ? new Date(entry.at).getTime() : Date.now();
+        // Include both regular KYC and vKYC entries
+        if (entry.action === "kyc_approved" || entry.action === "kyc_rejected" ||
+            entry.action === "vkyc_approved" || entry.action === "vkyc_rejected") {
+          const verdict = (entry.action === "kyc_approved" || entry.action === "vkyc_approved") ? "1" : "2";
+          // Use timestamp field if available (for vKYC), otherwise use at field
+          const timestamp = entry.timestamp 
+            ? new Date(entry.timestamp).getTime() 
+            : (entry.at ? new Date(entry.at).getTime() : Date.now());
           // Use remarks from message field (stored when status was updated)
           kycHistory.push([
             bankRequest.bankName || req.user.bankName || req.user.email,

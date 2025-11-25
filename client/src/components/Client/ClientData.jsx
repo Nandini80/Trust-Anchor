@@ -29,11 +29,21 @@ const ClientData = ({ userData }) => {
     if (userData.kycHistory && Array.isArray(userData.kycHistory) && userData.kycHistory.length > 0) {
       userData.kycHistory.forEach(item => {
         var d = new Date(parseInt(item[3])); 
+        // Format date and time: "MM/DD/YYYY HH:MM:SS"
+        const formattedDateTime = d.toLocaleString('en-US', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true
+        });
         const Titem = {
           name: item[0],
           remarks: item[1],
           status: findStatus(item[2]),
-          time: d.toDateString()
+          time: formattedDateTime
         }
         da.push(Titem)
       });
@@ -73,9 +83,10 @@ const ClientData = ({ userData }) => {
     key: 'status',
   },
   {
-    title: 'Time of last KYC',
+    title: 'Date & Time',
     dataIndex: 'time',
     key: 'time',
+    render: (text) => <span style={{fontWeight: '500'}}>{text}</span>,
   },
 ]
 
