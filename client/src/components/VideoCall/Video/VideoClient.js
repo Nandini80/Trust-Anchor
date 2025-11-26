@@ -29,6 +29,9 @@ const Video = () => {
     updateVideo,
     myMicStatus,
     updateMic,
+    isConnecting,
+    socketUpdated,
+    setSocketUpdated,
   } = useContext(VideoContext);
 
   const [sendMsg, setSendMsg] = useState("");
@@ -54,6 +57,7 @@ const Video = () => {
   
   useEffect(() => {
     if(me){
+      setSocketUpdated(false);
       fetch(`${baseURL}/updateSocket`, {
         method: "POST",
         headers: {
@@ -66,12 +70,22 @@ const Video = () => {
         .then((result, err) => {
           if (err) {
             console.log(err);
+            setSocketUpdated(false);
             return;
           }
           console.log(result);
+          if (result.success) {
+            setSocketUpdated(true);
+          } else {
+            setSocketUpdated(false);
+          }
+        })
+        .catch((error) => {
+          console.error("Error updating socket:", error);
+          setSocketUpdated(false);
         });
       }
-  }, [me]);
+  }, [me, setSocketUpdated]);
   console.log(me)
   const showModal = (showVal) => {
     setIsModalVisible(showVal);
@@ -93,6 +107,33 @@ const Video = () => {
      // eslint-disable-next-line
   }, [msgRcv]);
 
+  // Determine connection status message
+  const getConnectionStatus = () => {
+    // If socket is not connected or we haven't received socket ID yet
+    if (isConnecting || !me) {
+      return "Connecting to server...";
+    }
+    // If we have socket ID but haven't updated it in database yet
+    if (me && !socketUpdated) {
+      return "Establishing connection...";
+    }
+    // Fully connected
+    return null;
+  };
+  
+  // Debug logging
+  useEffect(() => {
+    console.log("Connection status:", {
+      isConnecting,
+      me,
+      socketUpdated,
+      socketConnected: socket.connected,
+      status: getConnectionStatus()
+    });
+  }, [isConnecting, me, socketUpdated]);
+
+  const connectionStatus = getConnectionStatus();
+
   return (
     <div className="grid">
     {stream ? (
@@ -101,6 +142,19 @@ const Video = () => {
         className="card"
         id={callAccepted && !callEnded ? "video1" : "video3"}
       >
+        {connectionStatus && (
+          <div style={{ 
+            padding: "10px", 
+            backgroundColor: "#1890ff", 
+            color: "white", 
+            borderRadius: "4px",
+            marginBottom: "10px",
+            fontSize: "14px",
+            fontWeight: "500"
+          }}>
+            {connectionStatus}
+          </div>
+        )}
         <div style={{ height: "2rem" }}>
           <h3>{myVdoStatus && name}</h3>
         </div>

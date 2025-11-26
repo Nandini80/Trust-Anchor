@@ -5,7 +5,12 @@ import Peer from "simple-peer";
 
 const URL = "http://localhost:5000/";
 
-export const socket = io(URL);
+export const socket = io(URL, {
+  autoConnect: true,
+  reconnection: true,
+  reconnectionDelay: 1000,
+  reconnectionAttempts: 5
+});
 
 const VideoState = ({ children }) => {
   const [callAccepted, setCallAccepted] = useState(false);
@@ -22,6 +27,8 @@ const VideoState = ({ children }) => {
   const [myMicStatus, setMyMicStatus] = useState(true);
   const [userMicStatus, setUserMicStatus] = useState();
   const [msgRcv, setMsgRcv] = useState("");
+  const [isConnecting, setIsConnecting] = useState(true);
+  const [socketUpdated, setSocketUpdated] = useState(false);
 
   const myVideo = useRef();
   const userVideo = useRef();
@@ -29,6 +36,39 @@ const VideoState = ({ children }) => {
   // const screenTrackRef = useRef();
 
   useEffect(() => {
+    // Track socket connection status
+    // Start with connecting state
+    setIsConnecting(true);
+    
+    // Check initial connection status - if already connected, wait for 'me' event
+    if (socket.connected && me) {
+      setIsConnecting(false);
+    } else if (socket.connected && !me) {
+      // Socket is connected but we haven't received 'me' yet
+      setIsConnecting(true);
+    } else {
+      // Socket not connected yet
+      setIsConnecting(true);
+    }
+    
+    // Listen for connection events
+    socket.on("connect", () => {
+      console.log("Socket connected, waiting for 'me' event...");
+      // Keep isConnecting true until we receive 'me' event
+      setIsConnecting(true);
+    });
+    
+    socket.on("disconnect", () => {
+      console.log("Socket disconnected");
+      setIsConnecting(true);
+      setSocketUpdated(false);
+    });
+
+    socket.on("connect_error", (error) => {
+      console.log("Socket connection error:", error);
+      setIsConnecting(true);
+    });
+
     navigator.mediaDevices
       .getUserMedia({ video: true, audio: true })
       .then((currentStream) => {
@@ -43,7 +83,38 @@ const VideoState = ({ children }) => {
       .catch((err) => {
         console.error("Error accessing camera/microphone:", err);
       });
-    socket.on("me", (id) => setMe(id));
+    
+    // This is the key event - only set isConnecting to false when we receive socket ID
+    let meReceived = false;
+    const handleMeEvent = (id) => {
+      if (meReceived) return; // Prevent duplicate calls
+      meReceived = true;
+      console.log("Received socket ID (me event):", id);
+      setMe(id);
+      setIsConnecting(false); // Only now we know connection is established
+    };
+    
+    socket.on("me", handleMeEvent);
+    
+    // If socket is already connected when this component mounts, 
+    // the 'me' event might have been missed. Use socket.id as fallback.
+    let timeoutId = null;
+    if (socket.connected && !me) {
+      console.log("Socket already connected but no 'me' received, checking socket.id...");
+      // Use socket.id directly as fallback if available
+      if (socket.id) {
+        console.log("Using socket.id as fallback:", socket.id);
+        // Small delay to allow 'me' event to arrive first if it's coming
+        timeoutId = setTimeout(() => {
+          if (!meReceived) {
+            console.log("'me' event not received after 1s, using socket.id fallback");
+            handleMeEvent(socket.id);
+          }
+        }, 1000);
+      } else {
+        console.warn("Socket connected but no ID available yet");
+      }
+    }
 
     socket.on("updateUserMedia", ({ type, currentMediaStatus }) => {
       if (currentMediaStatus !== null && currentMediaStatus !== undefined) {
@@ -111,12 +182,18 @@ const VideoState = ({ children }) => {
 
     // Cleanup function to remove listeners
     return () => {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
       socket.off("me");
       socket.off("updateUserMedia");
       socket.off("callUser");
       socket.off("msgRcv");
       socket.off("callAccepted");
       socket.off("endCall");
+      socket.off("connect");
+      socket.off("disconnect");
+      socket.off("connect_error");
     };
   }, []);
 
@@ -283,6 +360,9 @@ const VideoState = ({ children }) => {
         userMicStatus,
         updateMic,
         fullScreen,
+        isConnecting,
+        socketUpdated,
+        setSocketUpdated,
       }}
     >
       {children}
